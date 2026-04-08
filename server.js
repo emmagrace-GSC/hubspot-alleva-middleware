@@ -130,7 +130,7 @@ app.post("/hubspot/contact-sync", async (req, res) => {
           "lastname",
           "email",
           "phone",
-          "date_of_birth",
+          "date_of_birth_date",
           "alleva_patient_id"
         ]
       }
@@ -147,7 +147,7 @@ app.post("/hubspot/contact-sync", async (req, res) => {
   phone: {
     mobile: props.phone || ""
   },
-  dateOfBirth: props.date_of_birth || null
+  dateOfBirth: props.date_of_birth_date || null
 };
 
     let allevaResponse;
