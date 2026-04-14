@@ -205,22 +205,26 @@ async function searchContactsNeedingSync(after = null) {
       {
         filters: [
           {
-            propertyName: "email",
+            propertyName: "firstname",
+            operator: "HAS_PROPERTY"
+          },
+          {
+            propertyName: "lastname",
             operator: "HAS_PROPERTY"
           }
         ]
       }
     ],
     properties: [
-  "firstname",
-  "lastname",
-  "phone",
-  "pt__consumers_dob",
-  "alleva_patient_id",
-  "alleva_sync_status",
-  "alleva_last_sync_at",
-  "alleva_sync_error"
-]
+      "firstname",
+      "lastname",
+      "phone",
+      "pt__consumers_dob",
+      "alleva_patient_id",
+      "alleva_sync_status",
+      "alleva_last_sync_at",
+      "alleva_sync_error"
+    ],
     limit: 100,
     sorts: [
       {
