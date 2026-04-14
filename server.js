@@ -90,6 +90,157 @@ async function allevaRequest(method, url, data = null, params = null) {
   }
 }
 
+async function syncHubSpotContact(hubspotContactId) {
+  try {
+    const hsContact = await hubspotRequest(
+      "GET",
+      `/crm/v3/objects/contacts/${hubspotContactId}`,
+      null,
+      {
+        properties: [
+          "firstname",
+          "lastname",
+          "email",
+          "phone",
+          "date_of_birth_date",
+          "alleva_patient_id",
+          "alleva_sync_status",
+          "alleva_last_sync_at",
+          "alleva_sync_error"
+        ]
+      }
+    );
+
+    const props = hsContact.data.properties || {};
+
+    const allevaPayload = {
+      name: {
+        first: props.firstname || "",
+        last: props.lastname || ""
+      },
+      email: props.email || "",
+      phone: {
+        mobile: props.phone || ""
+      },
+      dateOfBirth: props.date_of_birth_date || null
+    };
+
+    let allevaResponse;
+
+    if (props.alleva_patient_id) {
+      allevaResponse = await allevaRequest(
+        "PATCH",
+        `/prospects/${props.alleva_patient_id}`,
+        allevaPayload
+      );
+    } else {
+      allevaResponse = await allevaRequest(
+        "POST",
+        `/prospects`,
+        allevaPayload
+      );
+    }
+
+    const allevaPatientId =
+      allevaResponse.data?.patientId ||
+      allevaResponse.data?.id ||
+      props.alleva_patient_id ||
+      "";
+
+    await hubspotRequest(
+      "PATCH",
+      `/crm/v3/objects/contacts/${hubspotContactId}`,
+      {
+        properties: {
+          alleva_patient_id: allevaPatientId,
+          alleva_last_sync_at: new Date().toISOString(),
+          alleva_sync_status: "success",
+          alleva_sync_error: ""
+        }
+      }
+    );
+
+    return {
+      ok: true,
+      hubspotContactId,
+      allevaPatientId
+    };
+  } catch (error) {
+    const errText = error.response?.data
+      ? JSON.stringify(error.response.data)
+      : error.message;
+
+    console.error(
+      `Sync failed for HubSpot contact ${hubspotContactId}:`,
+      error.response?.data || error.message
+    );
+
+    try {
+      await hubspotRequest(
+        "PATCH",
+        `/crm/v3/objects/contacts/${hubspotContactId}`,
+        {
+          properties: {
+            alleva_last_sync_at: new Date().toISOString(),
+            alleva_sync_status: "failed",
+            alleva_sync_error: errText.slice(0, 65000)
+          }
+        }
+      );
+    } catch (patchError) {
+      console.error(
+        "Could not update HubSpot error fields:",
+        patchError.response?.data || patchError.message
+      );
+    }
+
+    throw new Error(errText);
+  }
+}
+
+async function searchContactsNeedingSync(after = null) {
+  const body = {
+    filterGroups: [
+      {
+        filters: [
+          {
+            propertyName: "email",
+            operator: "HAS_PROPERTY"
+          }
+        ]
+      }
+    ],
+    properties: [
+      "firstname",
+      "lastname",
+      "email",
+      "phone",
+      "date_of_birth_date",
+      "alleva_patient_id",
+      "alleva_sync_status",
+      "alleva_last_sync_at",
+      "alleva_sync_error"
+    ],
+    limit: 100,
+    sorts: [
+      {
+        propertyName: "createdate",
+        direction: "ASCENDING"
+      }
+    ]
+  };
+
+  if (after) {
+    body.after = after;
+  }
+
+  return hubspotRequest(
+    "POST",
+    "/crm/v3/objects/contacts/search",
+    body
+  );
+}
+
 app.get("/health", (req, res) => {
   res.json({ ok: true, message: "Middleware is running" });
 });
@@ -120,100 +271,65 @@ app.post("/hubspot/contact-sync", async (req, res) => {
       });
     }
 
-    const hsContact = await hubspotRequest(
-      "GET",
-      `/crm/v3/objects/contacts/${hubspotContactId}`,
-      null,
-      {
-        properties: [
-          "firstname",
-          "lastname",
-          "email",
-          "phone",
-          "date_of_birth_date",
-          "alleva_patient_id"
-        ]
-      }
-    );
+    const result = await syncHubSpotContact(hubspotContactId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
 
-    const props = hsContact.data.properties;
+app.post("/poll-hubspot-once", async (req, res) => {
+  try {
+    let after = null;
+    let scanned = 0;
+    let matched = 0;
+    let processed = 0;
+    let failed = 0;
 
-    const allevaPayload = {
-  name: {
-    first: props.firstname || "",
-    last: props.lastname || ""
-  },
-  email: props.email || "",
-  phone: {
-    mobile: props.phone || ""
-  },
-  dateOfBirth: props.date_of_birth_date || null
-};
+    do {
+      const response = await searchContactsNeedingSync(after);
+      const results = response.data?.results || [];
 
-    let allevaResponse;
+      scanned += results.length;
 
-    if (props.alleva_patient_id) {
-  allevaResponse = await allevaRequest(
-    "PATCH",
-    `/prospects/${props.alleva_patient_id}`,
-    allevaPayload
-  );
-} else {
-  allevaResponse = await allevaRequest(
-    "POST",
-    `/prospects`,
-    allevaPayload
-  );
-    }
+      const contactsToSync = results.filter((contact) => {
+        const status = contact.properties?.alleva_sync_status;
+        return !status || status === "failed";
+      });
 
-    const allevaPatientId =
-      allevaResponse.data.patientId ||
-      allevaResponse.data.id ||
-      "";
+      matched += contactsToSync.length;
 
-    await hubspotRequest(
-      "PATCH",
-      `/crm/v3/objects/contacts/${hubspotContactId}`,
-      {
-        properties: {
-          alleva_patient_id: allevaPatientId,
-          alleva_last_sync_at: new Date().toISOString(),
-          alleva_sync_status: "success",
-          alleva_sync_error: ""
+      for (const contact of contactsToSync) {
+        try {
+          await syncHubSpotContact(contact.id);
+          processed += 1;
+        } catch (error) {
+          failed += 1;
+          console.error(
+            `Polling sync failed for contact ${contact.id}:`,
+            error.message
+          );
         }
       }
-    );
+
+      after = response.data?.paging?.next?.after || null;
+    } while (after);
 
     res.json({
       ok: true,
-      allevaPatientId
+      scanned,
+      matched,
+      processed,
+      failed
     });
   } catch (error) {
-    const errText = error.response?.data
-      ? JSON.stringify(error.response.data)
-      : error.message;
-
-    if (req.body.hubspotContactId) {
-      try {
-        await hubspotRequest(
-          "PATCH",
-          `/crm/v3/objects/contacts/${req.body.hubspotContactId}`,
-          {
-            properties: {
-              alleva_last_sync_at: new Date().toISOString(),
-              alleva_sync_status: "failed",
-              alleva_sync_error: errText.slice(0, 65000)
-            }
-          }
-        );
-      } catch (patchError) {
-        console.error("Could not update HubSpot error fields:", patchError.message);
-      }
-    }
-
+    console.error("Polling error:", error.response?.data || error.message);
     res.status(500).json({
       ok: false,
-      error: errText
+      error: error.response?.data || error.message
     });
   }
 });
