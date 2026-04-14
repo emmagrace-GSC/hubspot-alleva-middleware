@@ -98,27 +98,25 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties: [
-          "firstname",
-          "lastname",
-          "email",
-          "phone",
-          "date_of_birth_date",
-          "alleva_patient_id",
-          "alleva_sync_status",
-          "alleva_last_sync_at",
-          "alleva_sync_error"
-        ]
+  "firstname",
+  "lastname",
+  "phone",
+  "pt__consumers_dob",
+  "alleva_patient_id",
+  "alleva_sync_status",
+  "alleva_last_sync_at",
+  "alleva_sync_error"
+]
       }
     );
 
     const props = hsContact.data.properties || {};
 
 const allevaPayload = {
-  firstName: props.firstname || "",
-  lastName: props.lastname || "",
-  email: props.email || "",
-  phone: props.phone || "",
-  dateOfBirth: props.date_of_birth_date || null
+  firstName: props.firstname?.trim() || "",
+  lastName: props.lastname?.trim() || "",
+  ...(props.phone?.trim() ? { phone: props.phone.trim() } : {}),
+  ...(props.pt__consumers_dob ? { dateOfBirth: props.pt__consumers_dob } : {})
 };
 
 console.log("Testing HubSpot contact:", hubspotContactId);
@@ -214,16 +212,15 @@ async function searchContactsNeedingSync(after = null) {
       }
     ],
     properties: [
-      "firstname",
-      "lastname",
-      "email",
-      "phone",
-      "date_of_birth_date",
-      "alleva_patient_id",
-      "alleva_sync_status",
-      "alleva_last_sync_at",
-      "alleva_sync_error"
-    ],
+  "firstname",
+  "lastname",
+  "phone",
+  "pt__consumers_dob",
+  "alleva_patient_id",
+  "alleva_sync_status",
+  "alleva_last_sync_at",
+  "alleva_sync_error"
+]
     limit: 100,
     sorts: [
       {
