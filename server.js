@@ -113,7 +113,7 @@ async function syncHubSpotContact(hubspotContactId) {
 
     const props = hsContact.data.properties || {};
 
-   const allevaPayload = {
+const allevaPayload = {
   firstName: props.firstname || "",
   lastName: props.lastname || "",
   email: props.email || "",
@@ -121,7 +121,11 @@ async function syncHubSpotContact(hubspotContactId) {
   dateOfBirth: props.date_of_birth_date || null
 };
 
-    let allevaResponse;
+console.log("Testing HubSpot contact:", hubspotContactId);
+console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
+
+let allevaResponse;
+
 
     if (props.alleva_patient_id) {
       allevaResponse = await allevaRequest(
