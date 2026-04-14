@@ -100,7 +100,7 @@ async function syncHubSpotContact(hubspotContactId) {
         properties: [
   "firstname",
   "lastname",
-  "phone",
+  "pt__alternative_phone_for_consumer",
   "pt__consumers_dob",
   "alleva_patient_id",
   "alleva_sync_status",
@@ -115,7 +115,9 @@ async function syncHubSpotContact(hubspotContactId) {
 const allevaPayload = {
   firstName: props.firstname?.trim() || "",
   lastName: props.lastname?.trim() || "",
-  ...(props.phone?.trim() ? { phone: props.phone.trim() } : {}),
+  ...(props.pt__alternative_phone_for_consumer?.trim()
+    ? { phone: props.pt__alternative_phone_for_consumer.trim() }
+    : {}),
   ...(props.pt__consumers_dob ? { dateOfBirth: props.pt__consumers_dob } : {})
 };
 
@@ -216,15 +218,15 @@ async function searchContactsNeedingSync(after = null) {
       }
     ],
     properties: [
-      "firstname",
-      "lastname",
-      "phone",
-      "pt__consumers_dob",
-      "alleva_patient_id",
-      "alleva_sync_status",
-      "alleva_last_sync_at",
-      "alleva_sync_error"
-    ],
+  "firstname",
+  "lastname",
+  "pt__alternative_phone_for_consumer",
+  "pt__consumers_dob",
+  "alleva_patient_id",
+  "alleva_sync_status",
+  "alleva_last_sync_at",
+  "alleva_sync_error"
+],
     limit: 100,
     sorts: [
       {
