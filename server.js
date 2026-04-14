@@ -166,10 +166,13 @@ async function syncHubSpotContact(hubspotContactId) {
       ? JSON.stringify(error.response.data)
       : error.message;
 
-    console.error(
-      `Sync failed for HubSpot contact ${hubspotContactId}:`,
-      error.response?.data || error.message
-    );
+    console.error(`Sync failed for HubSpot contact ${hubspotContactId}`);
+console.error("Alleva response status:", error.response?.status);
+console.error(
+  "Alleva response data:",
+  JSON.stringify(error.response?.data, null, 2)
+);
+console.error("Full error message:", error.message);
 
     try {
       await hubspotRequest(
