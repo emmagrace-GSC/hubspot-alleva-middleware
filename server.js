@@ -113,17 +113,13 @@ async function syncHubSpotContact(hubspotContactId) {
 
     const props = hsContact.data.properties || {};
 
-    const allevaPayload = {
-      name: {
-        first: props.firstname || "",
-        last: props.lastname || ""
-      },
-      email: props.email || "",
-      phone: {
-        mobile: props.phone || ""
-      },
-      dateOfBirth: props.date_of_birth_date || null
-    };
+   const allevaPayload = {
+  firstName: props.firstname || "",
+  lastName: props.lastname || "",
+  email: props.email || "",
+  phone: props.phone || "",
+  dateOfBirth: props.date_of_birth_date || null
+};
 
     let allevaResponse;
 
