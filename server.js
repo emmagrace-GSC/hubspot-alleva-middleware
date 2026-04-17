@@ -119,22 +119,8 @@ async function syncHubSpotContact(hubspotContactId) {
       `/crm/v3/objects/contacts/${hubspotContactId}`,
       null,
       {
-        properties: [
-          "firstname",
-          "lastname",
-          "phone",
-          "pt__address",
-          "pt__address_2",
-          "pt__alternative_phone_for_consumer",
-          "pt__city",
-          "pt__consumers_dob",
-          "pt__first_name",
-          "pt__last_name",
-          "alleva_patient_id",
-          "alleva_sync_status",
-          "alleva_last_sync_at",
-          "alleva_sync_error"
-        ]
+        properties:
+          "pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__first_name,pt__last_name,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
       }
     );
 
@@ -142,11 +128,9 @@ async function syncHubSpotContact(hubspotContactId) {
 
     console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
 
-    const firstName = safeTrim(props.pt__first_name || props.firstname);
-    const lastName = safeTrim(props.pt__last_name || props.lastname);
-    const phone = safeTrim(
-      props.pt__alternative_phone_for_consumer || props.phone
-    );
+    const firstName = safeTrim(props.pt__first_name);
+    const lastName = safeTrim(props.pt__last_name);
+    const phone = safeTrim(props.pt__alternative_phone_for_consumer);
     const dob = formatHubSpotDate(props.pt__consumers_dob);
     const address1 = safeTrim(props.pt__address);
     const address2 = safeTrim(props.pt__address_2);
@@ -264,16 +248,17 @@ async function searchContactsNeedingSync(after = null) {
       {
         filters: [
           {
-            propertyName: "firstname",
+            propertyName: "pt__first_name",
+            operator: "HAS_PROPERTY"
+          },
+          {
+            propertyName: "pt__last_name",
             operator: "HAS_PROPERTY"
           }
         ]
       }
     ],
     properties: [
-      "firstname",
-      "lastname",
-      "phone",
       "pt__address",
       "pt__address_2",
       "pt__alternative_phone_for_consumer",
