@@ -29,19 +29,21 @@ function normalizePhone(value) {
 
 function compact(obj) {
   return Object.fromEntries(
-    Object.entries(obj).filter(([, value]) => {
-      if (value === null || value === undefined) return false;
-      if (typeof value === "string" && value.trim() === "") return false;
-      if (typeof value === "object" && !Array.isArray(value)) {
-        return Object.keys(compact(value)).length > 0;
-      }
-      return true;
-    }).map(([key, value]) => {
-      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-        return [key, compact(value)];
-      }
-      return [key, value];
-    })
+    Object.entries(obj)
+      .filter(([, value]) => {
+        if (value === null || value === undefined) return false;
+        if (typeof value === "string" && value.trim() === "") return false;
+        if (typeof value === "object" && !Array.isArray(value)) {
+          return Object.keys(compact(value)).length > 0;
+        }
+        return true;
+      })
+      .map(([key, value]) => {
+        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+          return [key, compact(value)];
+        }
+        return [key, value];
+      })
   );
 }
 
@@ -126,7 +128,7 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties:
-          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
+          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,pt__email,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
       }
     );
 
@@ -135,15 +137,24 @@ async function syncHubSpotContact(hubspotContactId) {
     console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
 
     const allevaPayload = compact({
-      firstName: safeTrim(props.pt__first_name),
-      lastName: safeTrim(props.pt__last_name),
-      email: safeTrim(props.pt__email),
+      name: {
+        first: safeTrim(props.pt__first_name),
+        last: safeTrim(props.pt__last_name)
+      },
+      dateOfBirth: safeTrim(props.pt__consumers_dob),
       phone: {
         number: normalizePhone(
           props.pt__alternative_phone_for_consumer || props.pt__primary_phone
         )
       },
-      dateOfBirth: safeTrim(props.pt__consumers_dob)
+      email: safeTrim(props.pt__email),
+      address: {
+        line1: safeTrim(props.pt__address),
+        line2: safeTrim(props.pt__address_2),
+        city: safeTrim(props.pt__city),
+        stateAbbr: safeTrim(props.pt__state),
+        zipCode: safeTrim(props.pt__zip_code)
+      }
     });
 
     const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
@@ -224,60 +235,6 @@ async function syncHubSpotContact(hubspotContactId) {
   }
 }
 
-async function searchContactsNeedingSync(after = null) {
-  const body = {
-    filterGroups: [
-      {
-        filters: [
-          {
-            propertyName: "pt__first_name",
-            operator: "HAS_PROPERTY"
-          },
-          {
-            propertyName: "pt__last_name",
-            operator: "HAS_PROPERTY"
-          }
-        ]
-      }
-    ],
-    properties: [
-      "pt__first_name",
-      "pt__last_name",
-      "pt__address",
-      "pt__address_2",
-      "pt__alternative_phone_for_consumer",
-      "pt__city",
-      "pt__consumers_dob",
-      "pt__zip_code",
-      "pt__state",
-      "pt__primary_phone",
-      "pt__email",
-      "pt__country",
-      "pt__ethnicityrace",
-      "pt__gender",
-      "pt__pronouns",
-      "pt__client_identifies_as",
-      "alleva_patient_id",
-      "alleva_sync_status",
-      "alleva_last_sync_at",
-      "alleva_sync_error"
-    ],
-    limit: 100,
-    sorts: [
-      {
-        propertyName: "createdate",
-        direction: "ASCENDING"
-      }
-    ]
-  };
-
-  if (after) {
-    body.after = after;
-  }
-
-  return hubspotRequest("POST", "/crm/v3/objects/contacts/search", body);
-}
-
 app.get("/", (req, res) => {
   res.send("Middleware is live");
 });
@@ -318,59 +275,6 @@ app.post("/hubspot/contact-sync", async (req, res) => {
     res.status(500).json({
       ok: false,
       error: error.message
-    });
-  }
-});
-
-app.post("/poll-hubspot-once", async (req, res) => {
-  try {
-    let after = null;
-    let scanned = 0;
-    let matched = 0;
-    let processed = 0;
-    let failed = 0;
-
-    do {
-      const response = await searchContactsNeedingSync(after);
-      const results = response.data?.results || [];
-
-      scanned += results.length;
-
-      const contactsToSync = results.filter((contact) => {
-        const status = contact.properties?.alleva_sync_status;
-        return !status || status === "failed";
-      });
-
-      matched += contactsToSync.length;
-
-      for (const contact of contactsToSync) {
-        try {
-          await syncHubSpotContact(contact.id);
-          processed += 1;
-        } catch (error) {
-          failed += 1;
-          console.error(
-            `Polling sync failed for contact ${contact.id}:`,
-            error.message
-          );
-        }
-      }
-
-      after = response.data?.paging?.next?.after || null;
-    } while (after);
-
-    res.json({
-      ok: true,
-      scanned,
-      matched,
-      processed,
-      failed
-    });
-  } catch (error) {
-    console.error("Polling error:", error.response?.data || error.message);
-    res.status(500).json({
-      ok: false,
-      error: error.response?.data || error.message
     });
   }
 });
