@@ -112,6 +112,10 @@ async function syncHubSpotContact(hubspotContactId) {
 
     const props = hsContact.data.properties || {};
 
+console.log("HubSpot raw properties:", JSON.stringify(hsContact.data.properties, null, 2));
+console.log("HubSpot alt phone:", props.pt__alternative_phone_for_consumer);
+console.log("HubSpot DOB:", props.pt__consumers_dob);
+
 const allevaPayload = {
   firstName: props.firstname?.trim() || "",
   lastName: props.lastname?.trim() || "",
