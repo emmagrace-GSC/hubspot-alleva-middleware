@@ -32,7 +32,15 @@ function compact(obj) {
     Object.entries(obj).filter(([, value]) => {
       if (value === null || value === undefined) return false;
       if (typeof value === "string" && value.trim() === "") return false;
+      if (typeof value === "object" && !Array.isArray(value)) {
+        return Object.keys(compact(value)).length > 0;
+      }
       return true;
+    }).map(([key, value]) => {
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        return [key, compact(value)];
+      }
+      return [key, value];
     })
   );
 }
@@ -130,9 +138,11 @@ async function syncHubSpotContact(hubspotContactId) {
       firstName: safeTrim(props.pt__first_name),
       lastName: safeTrim(props.pt__last_name),
       email: safeTrim(props.pt__email),
-      phone: normalizePhone(
-        props.pt__alternative_phone_for_consumer || props.pt__primary_phone
-      ),
+      phone: {
+        number: normalizePhone(
+          props.pt__alternative_phone_for_consumer || props.pt__primary_phone
+        )
+      },
       dateOfBirth: safeTrim(props.pt__consumers_dob)
     });
 
