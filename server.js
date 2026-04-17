@@ -165,7 +165,6 @@ async function syncHubSpotContact(hubspotContactId) {
         line2: safeTrim(props.pt__address_2),
         city: safeTrim(props.pt__city),
         stateAbbr: safeTrim(props.pt__state),
-        country: safeTrim(props.pt__country),
         zipCode: safeTrim(props.pt__zip_code)
       },
       phone: {
@@ -173,8 +172,7 @@ async function syncHubSpotContact(hubspotContactId) {
           props.pt__alternative_phone_for_consumer || props.pt__primary_phone
         )
       },
-      email: safeTrim(props.pt__email),
-      gender: safeTrim(props.pt__gender)
+      email: safeTrim(props.pt__email)
     });
 
     const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
