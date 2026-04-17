@@ -21,24 +21,6 @@ function safeTrim(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function formatHubSpotDate(value) {
-  if (!value) return null;
-
-  const trimmed = String(value).trim();
-  if (!trimmed) return null;
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return `${trimmed}T00:00:00.000Z`;
-  }
-
-  const parsed = new Date(trimmed);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toISOString();
-  }
-
-  return null;
-}
-
 function normalizePhone(value) {
   const trimmed = safeTrim(value);
   if (!trimmed) return "";
@@ -47,21 +29,11 @@ function normalizePhone(value) {
 
 function compact(obj) {
   return Object.fromEntries(
-    Object.entries(obj)
-      .filter(([, value]) => {
-        if (value === null || value === undefined) return false;
-        if (typeof value === "string" && value.trim() === "") return false;
-        if (typeof value === "object" && !Array.isArray(value)) {
-          return Object.keys(compact(value)).length > 0;
-        }
-        return true;
-      })
-      .map(([key, value]) => {
-        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-          return [key, compact(value)];
-        }
-        return [key, value];
-      })
+    Object.entries(obj).filter(([, value]) => {
+      if (value === null || value === undefined) return false;
+      if (typeof value === "string" && value.trim() === "") return false;
+      return true;
+    })
   );
 }
 
@@ -155,24 +127,13 @@ async function syncHubSpotContact(hubspotContactId) {
     console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
 
     const allevaPayload = compact({
-      name: {
-        first: safeTrim(props.pt__first_name),
-        last: safeTrim(props.pt__last_name)
-      },
-      dateOfBirth: formatHubSpotDate(props.pt__consumers_dob),
-      address: {
-        line1: safeTrim(props.pt__address),
-        line2: safeTrim(props.pt__address_2),
-        city: safeTrim(props.pt__city),
-        stateAbbr: safeTrim(props.pt__state),
-        zipCode: safeTrim(props.pt__zip_code)
-      },
-      phone: {
-        number: normalizePhone(
-          props.pt__alternative_phone_for_consumer || props.pt__primary_phone
-        )
-      },
-      email: safeTrim(props.pt__email)
+      firstName: safeTrim(props.pt__first_name),
+      lastName: safeTrim(props.pt__last_name),
+      email: safeTrim(props.pt__email),
+      phone: normalizePhone(
+        props.pt__alternative_phone_for_consumer || props.pt__primary_phone
+      ),
+      dateOfBirth: safeTrim(props.pt__consumers_dob)
     });
 
     const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
@@ -306,6 +267,10 @@ async function searchContactsNeedingSync(after = null) {
 
   return hubspotRequest("POST", "/crm/v3/objects/contacts/search", body);
 }
+
+app.get("/", (req, res) => {
+  res.send("Middleware is live");
+});
 
 app.get("/health", (req, res) => {
   res.json({ ok: true, message: "Middleware is running" });
