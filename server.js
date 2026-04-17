@@ -17,6 +17,28 @@ let tokenCache = {
   expiresAt: 0
 };
 
+function safeTrim(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function formatHubSpotDate(value) {
+  if (!value) return null;
+
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return `${trimmed}T00:00:00.000Z`;
+  }
+
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+
+  return trimmed;
+}
+
 async function getAllevaToken(forceRefresh = false) {
   const now = Date.now();
 
@@ -98,6 +120,9 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties: [
+          "firstname",
+          "lastname",
+          "phone",
           "pt__address",
           "pt__address_2",
           "pt__alternative_phone_for_consumer",
@@ -115,58 +140,61 @@ async function syncHubSpotContact(hubspotContactId) {
 
     const props = hsContact.data.properties || {};
 
-    console.log("HubSpot raw properties:", JSON.stringify(hsContact.data.properties, null, 2));
+    console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
+
+    const firstName = safeTrim(props.pt__first_name || props.firstname);
+    const lastName = safeTrim(props.pt__last_name || props.lastname);
+    const phone = safeTrim(
+      props.pt__alternative_phone_for_consumer || props.phone
+    );
+    const dob = formatHubSpotDate(props.pt__consumers_dob);
+    const address1 = safeTrim(props.pt__address);
+    const address2 = safeTrim(props.pt__address_2);
+    const city = safeTrim(props.pt__city);
 
     const allevaPayload = {
-      ...(props.pt__first_name?.trim() || props.pt__last_name?.trim()
+      ...(firstName || lastName
         ? {
             name: {
-              ...(props.pt__first_name?.trim() ? { first: props.pt__first_name.trim() } : {}),
-              ...(props.pt__last_name?.trim() ? { last: props.pt__last_name.trim() } : {})
+              ...(firstName ? { first: firstName } : {}),
+              ...(lastName ? { last: lastName } : {})
             }
           }
         : {}),
-      ...(props.pt__consumers_dob
-        ? { dateOfBirth: new Date(props.pt__consumers_dob).toISOString() }
-        : {}),
-      ...(props.pt__address?.trim() ||
-      props.pt__address_2?.trim() ||
-      props.pt__city?.trim()
+      ...(dob ? { dateOfBirth: dob } : {}),
+      ...(address1 || address2 || city
         ? {
             address: {
-              ...(props.pt__address?.trim() ? { line1: props.pt__address.trim() } : {}),
-              ...(props.pt__address_2?.trim() ? { line2: props.pt__address_2.trim() } : {}),
-              ...(props.pt__city?.trim() ? { city: props.pt__city.trim() } : {})
+              ...(address1 ? { line1: address1 } : {}),
+              ...(address2 ? { line2: address2 } : {}),
+              ...(city ? { city } : {})
             }
           }
         : {}),
-      ...(props.pt__alternative_phone_for_consumer?.trim()
+      ...(phone
         ? {
             phone: {
-              number: props.pt__alternative_phone_for_consumer.trim()
+              number: phone
             }
           }
         : {})
     };
 
+    const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
+    const allevaUrl = props.alleva_patient_id
+      ? `/prospects/${props.alleva_patient_id}`
+      : `/prospects`;
+
     console.log("Testing HubSpot contact:", hubspotContactId);
+    console.log("Alleva request method:", allevaMethod);
+    console.log("Alleva request URL:", allevaUrl);
     console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
 
-    let allevaResponse;
-
-    if (props.alleva_patient_id) {
-      allevaResponse = await allevaRequest(
-        "PATCH",
-        `/prospects/${props.alleva_patient_id}`,
-        allevaPayload
-      );
-    } else {
-      allevaResponse = await allevaRequest(
-        "POST",
-        `/prospects`,
-        allevaPayload
-      );
-    }
+    const allevaResponse = await allevaRequest(
+      allevaMethod,
+      allevaUrl,
+      allevaPayload
+    );
 
     const allevaPatientId =
       allevaResponse.data?.patientId ||
@@ -201,7 +229,9 @@ async function syncHubSpotContact(hubspotContactId) {
     console.error("Alleva response status:", error.response?.status);
     console.error(
       "Alleva response data:",
-      JSON.stringify(error.response?.data, null, 2)
+      typeof error.response?.data === "string"
+        ? error.response.data
+        : JSON.stringify(error.response?.data, null, 2)
     );
     console.error("Full error message:", error.message);
 
@@ -234,17 +264,16 @@ async function searchContactsNeedingSync(after = null) {
       {
         filters: [
           {
-            propertyName: "pt__first_name",
-            operator: "HAS_PROPERTY"
-          },
-          {
-            propertyName: "pt__last_name",
+            propertyName: "firstname",
             operator: "HAS_PROPERTY"
           }
         ]
       }
     ],
     properties: [
+      "firstname",
+      "lastname",
+      "phone",
       "pt__address",
       "pt__address_2",
       "pt__alternative_phone_for_consumer",
@@ -270,11 +299,7 @@ async function searchContactsNeedingSync(after = null) {
     body.after = after;
   }
 
-  return hubspotRequest(
-    "POST",
-    "/crm/v3/objects/contacts/search",
-    body
-  );
+  return hubspotRequest("POST", "/crm/v3/objects/contacts/search", body);
 }
 
 app.get("/health", (req, res) => {
