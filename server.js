@@ -98,38 +98,61 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties: [
-  "firstname",
-  "lastname",
-  "pt__alternative_phone_for_consumer",
-  "pt__consumers_dob",
-  "alleva_patient_id",
-  "alleva_sync_status",
-  "alleva_last_sync_at",
-  "alleva_sync_error"
-]
+          "pt__address",
+          "pt__address_2",
+          "pt__alternative_phone_for_consumer",
+          "pt__city",
+          "pt__consumers_dob",
+          "pt__first_name",
+          "pt__last_name",
+          "alleva_patient_id",
+          "alleva_sync_status",
+          "alleva_last_sync_at",
+          "alleva_sync_error"
+        ]
       }
     );
 
     const props = hsContact.data.properties || {};
 
-console.log("HubSpot raw properties:", JSON.stringify(hsContact.data.properties, null, 2));
-console.log("HubSpot alt phone:", props.pt__alternative_phone_for_consumer);
-console.log("HubSpot DOB:", props.pt__consumers_dob);
+    console.log("HubSpot raw properties:", JSON.stringify(hsContact.data.properties, null, 2));
 
-const allevaPayload = {
-  firstName: props.firstname?.trim() || "",
-  lastName: props.lastname?.trim() || "",
-  ...(props.pt__alternative_phone_for_consumer?.trim()
-    ? { phone: props.pt__alternative_phone_for_consumer.trim() }
-    : {}),
-  ...(props.pt__consumers_dob ? { dateOfBirth: props.pt__consumers_dob } : {})
-};
+    const allevaPayload = {
+      ...(props.pt__first_name?.trim() || props.pt__last_name?.trim()
+        ? {
+            name: {
+              ...(props.pt__first_name?.trim() ? { first: props.pt__first_name.trim() } : {}),
+              ...(props.pt__last_name?.trim() ? { last: props.pt__last_name.trim() } : {})
+            }
+          }
+        : {}),
+      ...(props.pt__consumers_dob
+        ? { dateOfBirth: new Date(props.pt__consumers_dob).toISOString() }
+        : {}),
+      ...(props.pt__address?.trim() ||
+      props.pt__address_2?.trim() ||
+      props.pt__city?.trim()
+        ? {
+            address: {
+              ...(props.pt__address?.trim() ? { line1: props.pt__address.trim() } : {}),
+              ...(props.pt__address_2?.trim() ? { line2: props.pt__address_2.trim() } : {}),
+              ...(props.pt__city?.trim() ? { city: props.pt__city.trim() } : {})
+            }
+          }
+        : {}),
+      ...(props.pt__alternative_phone_for_consumer?.trim()
+        ? {
+            phone: {
+              number: props.pt__alternative_phone_for_consumer.trim()
+            }
+          }
+        : {})
+    };
 
-console.log("Testing HubSpot contact:", hubspotContactId);
-console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
+    console.log("Testing HubSpot contact:", hubspotContactId);
+    console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
 
-let allevaResponse;
-
+    let allevaResponse;
 
     if (props.alleva_patient_id) {
       allevaResponse = await allevaRequest(
@@ -175,12 +198,12 @@ let allevaResponse;
       : error.message;
 
     console.error(`Sync failed for HubSpot contact ${hubspotContactId}`);
-console.error("Alleva response status:", error.response?.status);
-console.error(
-  "Alleva response data:",
-  JSON.stringify(error.response?.data, null, 2)
-);
-console.error("Full error message:", error.message);
+    console.error("Alleva response status:", error.response?.status);
+    console.error(
+      "Alleva response data:",
+      JSON.stringify(error.response?.data, null, 2)
+    );
+    console.error("Full error message:", error.message);
 
     try {
       await hubspotRequest(
@@ -211,26 +234,29 @@ async function searchContactsNeedingSync(after = null) {
       {
         filters: [
           {
-            propertyName: "firstname",
+            propertyName: "pt__first_name",
             operator: "HAS_PROPERTY"
           },
           {
-            propertyName: "lastname",
+            propertyName: "pt__last_name",
             operator: "HAS_PROPERTY"
           }
         ]
       }
     ],
     properties: [
-  "firstname",
-  "lastname",
-  "pt__alternative_phone_for_consumer",
-  "pt__consumers_dob",
-  "alleva_patient_id",
-  "alleva_sync_status",
-  "alleva_last_sync_at",
-  "alleva_sync_error"
-],
+      "pt__address",
+      "pt__address_2",
+      "pt__alternative_phone_for_consumer",
+      "pt__city",
+      "pt__consumers_dob",
+      "pt__first_name",
+      "pt__last_name",
+      "alleva_patient_id",
+      "alleva_sync_status",
+      "alleva_last_sync_at",
+      "alleva_sync_error"
+    ],
     limit: 100,
     sorts: [
       {
