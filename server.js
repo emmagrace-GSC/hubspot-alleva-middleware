@@ -36,7 +36,33 @@ function formatHubSpotDate(value) {
     return parsed.toISOString();
   }
 
-  return trimmed;
+  return null;
+}
+
+function normalizePhone(value) {
+  const trimmed = safeTrim(value);
+  if (!trimmed) return "";
+  return trimmed.replace(/\D/g, "");
+}
+
+function compact(obj) {
+  return Object.fromEntries(
+    Object.entries(obj)
+      .filter(([, value]) => {
+        if (value === null || value === undefined) return false;
+        if (typeof value === "string" && value.trim() === "") return false;
+        if (typeof value === "object" && !Array.isArray(value)) {
+          return Object.keys(compact(value)).length > 0;
+        }
+        return true;
+      })
+      .map(([key, value]) => {
+        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+          return [key, compact(value)];
+        }
+        return [key, value];
+      })
+  );
 }
 
 async function getAllevaToken(forceRefresh = false) {
@@ -120,7 +146,7 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties:
-          "pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__first_name,pt__last_name,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
+          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
       }
     );
 
@@ -128,41 +154,28 @@ async function syncHubSpotContact(hubspotContactId) {
 
     console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
 
-    const firstName = safeTrim(props.pt__first_name);
-    const lastName = safeTrim(props.pt__last_name);
-    const phone = safeTrim(props.pt__alternative_phone_for_consumer);
-    const dob = formatHubSpotDate(props.pt__consumers_dob);
-    const address1 = safeTrim(props.pt__address);
-    const address2 = safeTrim(props.pt__address_2);
-    const city = safeTrim(props.pt__city);
-
-    const allevaPayload = {
-      ...(firstName || lastName
-        ? {
-            name: {
-              ...(firstName ? { first: firstName } : {}),
-              ...(lastName ? { last: lastName } : {})
-            }
-          }
-        : {}),
-      ...(dob ? { dateOfBirth: dob } : {}),
-      ...(address1 || address2 || city
-        ? {
-            address: {
-              ...(address1 ? { line1: address1 } : {}),
-              ...(address2 ? { line2: address2 } : {}),
-              ...(city ? { city } : {})
-            }
-          }
-        : {}),
-      ...(phone
-        ? {
-            phone: {
-              number: phone
-            }
-          }
-        : {})
-    };
+    const allevaPayload = compact({
+      name: {
+        first: safeTrim(props.pt__first_name),
+        last: safeTrim(props.pt__last_name)
+      },
+      dateOfBirth: formatHubSpotDate(props.pt__consumers_dob),
+      address: {
+        line1: safeTrim(props.pt__address),
+        line2: safeTrim(props.pt__address_2),
+        city: safeTrim(props.pt__city),
+        stateAbbr: safeTrim(props.pt__state),
+        country: safeTrim(props.pt__country),
+        zipCode: safeTrim(props.pt__zip_code)
+      },
+      phone: {
+        number: normalizePhone(
+          props.pt__alternative_phone_for_consumer || props.pt__primary_phone
+        )
+      },
+      email: safeTrim(props.pt__email),
+      gender: safeTrim(props.pt__gender)
+    });
 
     const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
     const allevaUrl = props.alleva_patient_id
@@ -259,13 +272,22 @@ async function searchContactsNeedingSync(after = null) {
       }
     ],
     properties: [
+      "pt__first_name",
+      "pt__last_name",
       "pt__address",
       "pt__address_2",
       "pt__alternative_phone_for_consumer",
       "pt__city",
       "pt__consumers_dob",
-      "pt__first_name",
-      "pt__last_name",
+      "pt__zip_code",
+      "pt__state",
+      "pt__primary_phone",
+      "pt__email",
+      "pt__country",
+      "pt__ethnicityrace",
+      "pt__gender",
+      "pt__pronouns",
+      "pt__client_identifies_as",
       "alleva_patient_id",
       "alleva_sync_status",
       "alleva_last_sync_at",
