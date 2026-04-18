@@ -11,13 +11,19 @@ const ALLEVA_CLIENT_ID = process.env.ALLEVA_CLIENT_ID;
 const ALLEVA_CLIENT_SECRET = process.env.ALLEVA_CLIENT_SECRET;
 const ALLEVA_TOKEN_URL = process.env.ALLEVA_TOKEN_URL;
 
-// Real UI endpoint base you found
+// Real UI endpoint base
 const ALLEVA_LEAD_API_BASE =
   process.env.ALLEVA_LEAD_API_BASE ||
   "https://allevasoftproapi-prod2.allevasoft.com";
 
 const ALLEVA_REHAB_HEADER =
   process.env.ALLEVA_REHAB_HEADER || "advocatesupport";
+
+// Browser-origin headers from the working request
+const ALLEVA_ORIGIN =
+  process.env.ALLEVA_ORIGIN || "https://advocatesupport.allevasoft.com";
+const ALLEVA_REFERER =
+  process.env.ALLEVA_REFERER || "https://advocatesupport.allevasoft.com/";
 
 // Defaults captured from the working Alleva browser request
 const ALLEVA_CREATED_BY = process.env.ALLEVA_CREATED_BY || "1032";
@@ -66,12 +72,10 @@ function formatDateMMDDYYYY(value) {
   const trimmed = safeTrim(value);
   if (!trimmed) return "";
 
-  // Already in MM/DD/YYYY
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
     return trimmed;
   }
 
-  // Convert YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
     const [yyyy, mm, dd] = trimmed.split("-");
     return `${mm}/${dd}/${yyyy}`;
@@ -144,7 +148,7 @@ async function getAllevaToken(forceRefresh = false) {
   });
 
   tokenCache.accessToken = response.data.access_token;
-  tokenCache.expiresAt = now + response.data.expires_in * 1000;
+  tokenCache.expiresAt = Date.now() + response.data.expires_in * 1000;
 
   return tokenCache.accessToken;
 }
@@ -173,7 +177,9 @@ async function createAllevaLead(leadInfo) {
         Authorization: `Bearer ${token}`,
         Accept: "application/json, text/plain, */*",
         "Content-Type": "application/json;charset=UTF-8",
-        rehab: ALLEVA_REHAB_HEADER
+        rehab: ALLEVA_REHAB_HEADER,
+        Origin: ALLEVA_ORIGIN,
+        Referer: ALLEVA_REFERER
       }
     }
   );
@@ -195,7 +201,6 @@ async function syncHubSpotContact(hubspotContactId) {
 
     console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
 
-    // Prevent duplicate create until we know the correct update endpoint
     if (props.alleva_patient_id) {
       console.log(
         "Skipping create because alleva_patient_id already exists:",
@@ -216,6 +221,7 @@ async function syncHubSpotContact(hubspotContactId) {
     const primaryPhone = formatPhoneForAlleva(props.pt__primary_phone);
     const dob = formatDateMMDDYYYY(props.pt__consumers_dob);
     const address1 = safeTrim(props.pt__address);
+    const address2 = safeTrim(props.pt__address_2);
     const city = safeTrim(props.pt__city).toUpperCase();
     const zipCode = safeTrim(props.pt__zip_code);
     const email = safeTrim(props.pt__email);
@@ -251,9 +257,8 @@ async function syncHubSpotContact(hubspotContactId) {
       TimeZoneId: ALLEVA_TIMEZONE_ID
     };
 
-    // Include Address2 only if Alleva tolerates it. Your captured request did not show it.
-    if (safeTrim(props.pt__address_2)) {
-      leadInfo.Address2 = safeTrim(props.pt__address_2);
+    if (address2) {
+      leadInfo.Address2 = address2;
     }
 
     console.log("Testing HubSpot contact:", hubspotContactId);
