@@ -10,7 +10,30 @@ const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
 const ALLEVA_CLIENT_ID = process.env.ALLEVA_CLIENT_ID;
 const ALLEVA_CLIENT_SECRET = process.env.ALLEVA_CLIENT_SECRET;
 const ALLEVA_TOKEN_URL = process.env.ALLEVA_TOKEN_URL;
-const ALLEVA_API_BASE = process.env.ALLEVA_API_BASE;
+
+// Real UI endpoint base you found
+const ALLEVA_LEAD_API_BASE =
+  process.env.ALLEVA_LEAD_API_BASE ||
+  "https://allevasoftproapi-prod2.allevasoft.com";
+
+const ALLEVA_REHAB_HEADER =
+  process.env.ALLEVA_REHAB_HEADER || "advocatesupport";
+
+// Defaults captured from the working Alleva browser request
+const ALLEVA_CREATED_BY = process.env.ALLEVA_CREATED_BY || "1032";
+const ALLEVA_FACILITY_ID = process.env.ALLEVA_FACILITY_ID || "2197";
+const ALLEVA_REHAB_ID = process.env.ALLEVA_REHAB_ID || "704";
+const ALLEVA_COUNTRY_ID = process.env.ALLEVA_COUNTRY_ID || "6";
+const ALLEVA_OK_STATE_ID = process.env.ALLEVA_OK_STATE_ID || "78";
+const ALLEVA_FEMALE_GENDER_ID = process.env.ALLEVA_FEMALE_GENDER_ID || "1018";
+const ALLEVA_STATUS_ID = Number(process.env.ALLEVA_STATUS_ID || 1049);
+const ALLEVA_LEAD_INTAKE_STATUS_ID = Number(
+  process.env.ALLEVA_LEAD_INTAKE_STATUS_ID || 1102
+);
+const ALLEVA_LEAD_SELF_STATUS_ID =
+  process.env.ALLEVA_LEAD_SELF_STATUS_ID || "1546";
+const ALLEVA_RELATION_ID = process.env.ALLEVA_RELATION_ID || "1454";
+const ALLEVA_TIMEZONE_ID = process.env.ALLEVA_TIMEZONE_ID || "8";
 
 let tokenCache = {
   accessToken: null,
@@ -21,30 +44,81 @@ function safeTrim(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function normalizePhone(value) {
-  const trimmed = safeTrim(value);
-  if (!trimmed) return "";
-  return trimmed.replace(/\D/g, "");
+function onlyDigits(value) {
+  return safeTrim(value).replace(/\D/g, "");
 }
 
-function compact(obj) {
-  return Object.fromEntries(
-    Object.entries(obj)
-      .filter(([, value]) => {
-        if (value === null || value === undefined) return false;
-        if (typeof value === "string" && value.trim() === "") return false;
-        if (typeof value === "object" && !Array.isArray(value)) {
-          return Object.keys(compact(value)).length > 0;
-        }
-        return true;
-      })
-      .map(([key, value]) => {
-        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-          return [key, compact(value)];
-        }
-        return [key, value];
-      })
-  );
+function formatPhoneForAlleva(value) {
+  const digits = onlyDigits(value);
+  if (!digits) return "";
+
+  const normalized =
+    digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+
+  if (normalized.length === 10) {
+    return `(${normalized.slice(0, 3)}) ${normalized.slice(3, 6)}-${normalized.slice(6)}`;
+  }
+
+  return digits;
+}
+
+function formatDateMMDDYYYY(value) {
+  const trimmed = safeTrim(value);
+  if (!trimmed) return "";
+
+  // Already in MM/DD/YYYY
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Convert YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [yyyy, mm, dd] = trimmed.split("-");
+    return `${mm}/${dd}/${yyyy}`;
+  }
+
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+    const dd = String(parsed.getDate()).padStart(2, "0");
+    const yyyy = parsed.getFullYear();
+    return `${mm}/${dd}/${yyyy}`;
+  }
+
+  return trimmed;
+}
+
+function formatTodayMMDDYYYY() {
+  const now = new Date();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const yyyy = now.getFullYear();
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+function getGenderId(genderValue) {
+  const normalized = safeTrim(genderValue).toLowerCase();
+
+  if (normalized === "female") return ALLEVA_FEMALE_GENDER_ID;
+  if (normalized === "male") return process.env.ALLEVA_MALE_GENDER_ID || "";
+  return process.env.ALLEVA_DEFAULT_GENDER_ID || "";
+}
+
+function getStateId(stateValue) {
+  const normalized = safeTrim(stateValue).toUpperCase();
+
+  if (normalized === "OK") return ALLEVA_OK_STATE_ID;
+  return process.env.ALLEVA_DEFAULT_STATE_ID || "";
+}
+
+function getCountryId(countryValue) {
+  const normalized = safeTrim(countryValue).toLowerCase();
+
+  if (normalized === "united_states" || normalized === "united states") {
+    return ALLEVA_COUNTRY_ID;
+  }
+
+  return process.env.ALLEVA_DEFAULT_COUNTRY_ID || "";
 }
 
 async function getAllevaToken(forceRefresh = false) {
@@ -88,36 +162,21 @@ async function hubspotRequest(method, url, data = null, params = null) {
   });
 }
 
-async function allevaRequest(method, url, data = null, params = null) {
-  let token = await getAllevaToken();
+async function createAllevaLead(leadInfo) {
+  const token = await getAllevaToken();
 
-  try {
-    return await axios({
-      method,
-      url: `${ALLEVA_API_BASE}${url}`,
+  return axios.post(
+    `${ALLEVA_LEAD_API_BASE}/api/LeadAPI/AddNewLead`,
+    { leadInfo },
+    {
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
-      data,
-      params
-    });
-  } catch (error) {
-    if (error.response?.status === 401) {
-      token = await getAllevaToken(true);
-      return await axios({
-        method,
-        url: `${ALLEVA_API_BASE}${url}`,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        data,
-        params
-      });
+        Accept: "application/json, text/plain, */*",
+        "Content-Type": "application/json;charset=UTF-8",
+        rehab: ALLEVA_REHAB_HEADER
+      }
     }
-    throw error;
-  }
+  );
 }
 
 async function syncHubSpotContact(hubspotContactId) {
@@ -128,7 +187,7 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties:
-          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,pt__email,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
+          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
       }
     );
 
@@ -136,47 +195,86 @@ async function syncHubSpotContact(hubspotContactId) {
 
     console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
 
-    const allevaPayload = compact({
-      name: {
-        first: safeTrim(props.pt__first_name),
-        last: safeTrim(props.pt__last_name)
-      },
-      dateOfBirth: safeTrim(props.pt__consumers_dob),
-      phone: {
-        number: normalizePhone(
-          props.pt__alternative_phone_for_consumer || props.pt__primary_phone
-        )
-      },
-      email: safeTrim(props.pt__email),
-      address: {
-        line1: safeTrim(props.pt__address),
-        line2: safeTrim(props.pt__address_2),
-        city: safeTrim(props.pt__city),
-        stateAbbr: safeTrim(props.pt__state),
-        zipCode: safeTrim(props.pt__zip_code)
-      }
-    });
+    // Prevent duplicate create until we know the correct update endpoint
+    if (props.alleva_patient_id) {
+      console.log(
+        "Skipping create because alleva_patient_id already exists:",
+        props.alleva_patient_id
+      );
 
-    const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
-    const allevaUrl = props.alleva_patient_id
-      ? `/prospects/${props.alleva_patient_id}`
-      : `/prospects`;
+      return {
+        ok: true,
+        hubspotContactId,
+        allevaPatientId: props.alleva_patient_id,
+        skipped: true
+      };
+    }
+
+    const firstName = safeTrim(props.pt__first_name);
+    const lastName = safeTrim(props.pt__last_name);
+    const altPhone = formatPhoneForAlleva(props.pt__alternative_phone_for_consumer);
+    const primaryPhone = formatPhoneForAlleva(props.pt__primary_phone);
+    const dob = formatDateMMDDYYYY(props.pt__consumers_dob);
+    const address1 = safeTrim(props.pt__address);
+    const city = safeTrim(props.pt__city).toUpperCase();
+    const zipCode = safeTrim(props.pt__zip_code);
+    const email = safeTrim(props.pt__email);
+    const countryId = getCountryId(props.pt__country);
+    const stateId = getStateId(props.pt__state);
+    const genderId = getGenderId(props.pt__gender);
+
+    const leadInfo = {
+      Address1: address1,
+      AdmissionDate: formatTodayMMDDYYYY(),
+      City: city,
+      ContactFirstName: firstName,
+      ContactPhoneNumber: altPhone,
+      CountryId: countryId || ALLEVA_COUNTRY_ID,
+      CreatedBy: ALLEVA_CREATED_BY,
+      DateOfBirth: dob,
+      EmailAddress: email,
+      FacilityId: ALLEVA_FACILITY_ID,
+      FirstName: firstName,
+      Gender: genderId || ALLEVA_FEMALE_GENDER_ID,
+      IsFavourite: false,
+      IsLeadHot: false,
+      LastName: lastName,
+      LeadIntakeStatusId: ALLEVA_LEAD_INTAKE_STATUS_ID,
+      LeadSelfStatus: ALLEVA_LEAD_SELF_STATUS_ID,
+      OtherNumber: primaryPhone,
+      PostalCode: zipCode,
+      Prefix: 0,
+      RehabId: ALLEVA_REHAB_ID,
+      Relation: ALLEVA_RELATION_ID,
+      StateId: stateId || ALLEVA_OK_STATE_ID,
+      StatusId: ALLEVA_STATUS_ID,
+      TimeZoneId: ALLEVA_TIMEZONE_ID
+    };
+
+    // Include Address2 only if Alleva tolerates it. Your captured request did not show it.
+    if (safeTrim(props.pt__address_2)) {
+      leadInfo.Address2 = safeTrim(props.pt__address_2);
+    }
 
     console.log("Testing HubSpot contact:", hubspotContactId);
-    console.log("Alleva request method:", allevaMethod);
-    console.log("Alleva request URL:", allevaUrl);
-    console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
+    console.log(
+      "Alleva request URL:",
+      `${ALLEVA_LEAD_API_BASE}/api/LeadAPI/AddNewLead`
+    );
+    console.log("Alleva leadInfo payload:", JSON.stringify(leadInfo, null, 2));
 
-    const allevaResponse = await allevaRequest(
-      allevaMethod,
-      allevaUrl,
-      allevaPayload
+    const allevaResponse = await createAllevaLead(leadInfo);
+
+    console.log(
+      "Alleva AddNewLead response:",
+      JSON.stringify(allevaResponse.data, null, 2)
     );
 
     const allevaPatientId =
-      allevaResponse.data?.patientId ||
       allevaResponse.data?.id ||
-      props.alleva_patient_id ||
+      allevaResponse.data?.result ||
+      allevaResponse.data?.leadId ||
+      allevaResponse.data?.clientId ||
       "";
 
     await hubspotRequest(
@@ -184,7 +282,7 @@ async function syncHubSpotContact(hubspotContactId) {
       `/crm/v3/objects/contacts/${hubspotContactId}`,
       {
         properties: {
-          alleva_patient_id: allevaPatientId,
+          alleva_patient_id: String(allevaPatientId || ""),
           alleva_last_sync_at: new Date().toISOString(),
           alleva_sync_status: "success",
           alleva_sync_error: ""
@@ -195,7 +293,8 @@ async function syncHubSpotContact(hubspotContactId) {
     return {
       ok: true,
       hubspotContactId,
-      allevaPatientId
+      allevaPatientId,
+      allevaResponse: allevaResponse.data
     };
   } catch (error) {
     const errText = error.response?.data
