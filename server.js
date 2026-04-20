@@ -215,9 +215,7 @@ async function syncHubSpotContact(hubspotContactId) {
       }
     });
 
-    const importPayload = {
-      prospects: [allevaPayload]
-    };
+    const importPayload = [allevaPayload];
 
     const allevaUrl = `/v${ALLEVA_API_VERSION}/prospects/import`;
 
