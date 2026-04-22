@@ -7,11 +7,11 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
-const ALLEVA_CLIENT_ID = process.env.ALLEVA_CLIENT_ID;
+const ALLEVA_CLIENT_ID = 
+process.env.ALLEVA_CLIENT_ID;
 const ALLEVA_CLIENT_SECRET = process.env.ALLEVA_CLIENT_SECRET;
 const ALLEVA_TOKEN_URL = process.env.ALLEVA_TOKEN_URL;
-const ALLEVA_API_BASE = process.env.ALLEVA_API_BASE || "https://api.allevasoft.com";
-const ALLEVA_API_VERSION = process.env.ALLEVA_API_VERSION || "1";
+const ALLEVA_API_BASE = process.env.ALLEVA_API_BASE;
 
 let tokenCache = {
   accessToken: null,
@@ -32,10 +32,12 @@ function formatHubSpotDate(value) {
   const trimmed = safeTrim(value);
   if (!trimmed) return null;
 
+  // Keep YYYY-MM-DD as-is for now
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
     return trimmed;
   }
 
+  // Convert MM/DD/YYYY to YYYY-MM-DD
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
     const [mm, dd, yyyy] = trimmed.split("/");
     return `${yyyy}-${mm}-${dd}`;
@@ -51,32 +53,76 @@ function formatHubSpotDate(value) {
 
 function mapGender(value) {
   const normalized = safeTrim(value).toLowerCase();
+
   if (normalized === "female") return "Female";
   if (normalized === "male") return "Male";
+
   return safeTrim(value);
 }
 
 function mapCountry(value) {
   const normalized = safeTrim(value).toLowerCase();
+
   if (normalized === "united_states") return "United States";
   return safeTrim(value);
 }
 
 function mapStateName(value) {
   const normalized = safeTrim(value).toUpperCase();
+
   const stateMap = {
-    AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California",
-    CO: "Colorado", CT: "Connecticut", DE: "Delaware", FL: "Florida", GA: "Georgia",
-    HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa",
-    KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland",
-    MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi",
-    MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire",
-    NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina",
-    ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania",
-    RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee",
-    TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington",
-    WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming"
+    AL: "Alabama",
+    AK: "Alaska",
+    AZ: "Arizona",
+    AR: "Arkansas",
+    CA: "California",
+    CO: "Colorado",
+    CT: "Connecticut",
+    DE: "Delaware",
+    FL: "Florida",
+    GA: "Georgia",
+    HI: "Hawaii",
+    ID: "Idaho",
+    IL: "Illinois",
+    IN: "Indiana",
+    IA: "Iowa",
+    KS: "Kansas",
+    KY: "Kentucky",
+    LA: "Louisiana",
+    ME: "Maine",
+    MD: "Maryland",
+    MA: "Massachusetts",
+    MI: "Michigan",
+    MN: "Minnesota",
+    MS: "Mississippi",
+    MO: "Missouri",
+    MT: "Montana",
+    NE: "Nebraska",
+    NV: "Nevada",
+    NH: "New Hampshire",
+    NJ: "New Jersey",
+    NM: "New Mexico",
+    NY: "New York",
+    NC: "North Carolina",
+    ND: "North Dakota",
+    OH: "Ohio",
+    OK: "Oklahoma",
+    OR: "Oregon",
+    PA: "Pennsylvania",
+    RI: "Rhode Island",
+    SC: "South Carolina",
+    SD: "South Dakota",
+    TN: "Tennessee",
+    TX: "Texas",
+    UT: "Utah",
+    VT: "Vermont",
+    VA: "Virginia",
+    WA: "Washington",
+    WV: "West Virginia",
+    WI: "Wisconsin",
+    WY: "Wyoming"
   };
+
   return stateMap[normalized] || "";
 }
 
@@ -183,7 +229,7 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties:
-          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,pt__email,pt__country,pt__gender,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
+          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
       }
     );
 
@@ -191,48 +237,70 @@ async function syncHubSpotContact(hubspotContactId) {
 
     console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
 
+    const firstName = safeTrim(props.pt__first_name);
+    const lastName = safeTrim(props.pt__last_name);
+    const phoneNumber = normalizePhone(
+      props.pt__alternative_phone_for_consumer || props.pt__primary_phone
+    );
+    const dob = formatHubSpotDate(props.pt__consumers_dob);
+    const address1 = safeTrim(props.pt__address);
+    const address2 = safeTrim(props.pt__address_2);
+    const city = safeTrim(props.pt__city);
+    const stateAbbr = safeTrim(props.pt__state).toUpperCase();
+    const stateName = mapStateName(stateAbbr);
+    const zipCode = safeTrim(props.pt__zip_code);
+    const country = mapCountry(props.pt__country);
+    const email = safeTrim(props.pt__email);
+    const gender = mapGender(props.pt__gender);
+
     const allevaPayload = compact({
       name: {
-        first: safeTrim(props.pt__first_name),
-        last: safeTrim(props.pt__last_name)
+        first: firstName,
+        last: lastName
       },
-      dateOfBirth: formatHubSpotDate(props.pt__consumers_dob),
-      email: safeTrim(props.pt__email),
-      gender: mapGender(props.pt__gender),
+      dateOfBirth: dob,
+      email,
+      gender,
       phone: {
-        number: normalizePhone(
-          props.pt__alternative_phone_for_consumer || props.pt__primary_phone
-        )
+        number: phoneNumber
       },
       address: {
-        line1: safeTrim(props.pt__address),
-        line2: safeTrim(props.pt__address_2),
-        city: safeTrim(props.pt__city),
-        state: mapStateName(props.pt__state),
-        stateAbbr: safeTrim(props.pt__state).toUpperCase(),
-        country: mapCountry(props.pt__country),
-        zipCode: safeTrim(props.pt__zip_code)
+        line1: address1,
+        line2: address2,
+        city,
+        state: stateName,
+        stateAbbr,
+        country,
+        zipCode
       }
     });
 
-    const importPayload = [allevaPayload];
-
-    const allevaUrl = `/v${ALLEVA_API_VERSION}/prospects/import`;
+    const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
+    const allevaUrl = props.alleva_patient_id
+      ? `/prospects/${props.alleva_patient_id}`
+      : `/prospects`;
 
     console.log("Testing HubSpot contact:", hubspotContactId);
-    console.log("Alleva request method:", "POST");
+    console.log("Alleva request method:", allevaMethod);
     console.log("Alleva request URL:", allevaUrl);
-    console.log("Alleva payload:", JSON.stringify(importPayload, null, 2));
+    console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
 
-    const allevaResponse = await allevaRequest("POST", allevaUrl, importPayload);
+    const allevaResponse = await allevaRequest(
+      allevaMethod,
+      allevaUrl,
+      allevaPayload
+    );
 
-    console.log("Alleva response:", JSON.stringify(allevaResponse.data, null, 2));
+    console.log(
+      "Alleva response:",
+      JSON.stringify(allevaResponse.data, null, 2)
+    );
 
     const allevaPatientId =
       allevaResponse.data?.patientId ||
       allevaResponse.data?.id ||
       allevaResponse.data?.result ||
-      allevaResponse.data?.leadId ||
+      props.alleva_patient_id ||
       "";
 
     await hubspotRequest(
@@ -292,6 +360,60 @@ async function syncHubSpotContact(hubspotContactId) {
   }
 }
 
+async function searchContactsNeedingSync(after = null) {
+  const body = {
+    filterGroups: [
+      {
+        filters: [
+          {
+            propertyName: "pt__first_name",
+            operator: "HAS_PROPERTY"
+          },
+          {
+            propertyName: "pt__last_name",
+            operator: "HAS_PROPERTY"
+          }
+        ]
+      }
+    ],
+    properties: [
+      "pt__first_name",
+      "pt__last_name",
+      "pt__address",
+      "pt__address_2",
+      "pt__alternative_phone_for_consumer",
+      "pt__city",
+      "pt__consumers_dob",
+      "pt__zip_code",
+      "pt__state",
+      "pt__primary_phone",
+      "pt__email",
+      "pt__country",
+      "pt__ethnicityrace",
+      "pt__gender",
+      "pt__pronouns",
+      "pt__client_identifies_as",
+      "alleva_patient_id",
+      "alleva_sync_status",
+      "alleva_last_sync_at",
+      "alleva_sync_error"
+    ],
+    limit: 100,
+    sorts: [
+      {
+        propertyName: "createdate",
+        direction: "ASCENDING"
+      }
+    ]
+  };
+
+  if (after) {
+    body.after = after;
+  }
+
+  return hubspotRequest("POST", "/crm/v3/objects/contacts/search", body);
+}
+
 app.get("/", (req, res) => {
   res.send("Middleware is live");
 });
@@ -332,6 +454,59 @@ app.post("/hubspot/contact-sync", async (req, res) => {
     res.status(500).json({
       ok: false,
       error: error.message
+    });
+  }
+});
+
+app.post("/poll-hubspot-once", async (req, res) => {
+  try {
+    let after = null;
+    let scanned = 0;
+    let matched = 0;
+    let processed = 0;
+    let failed = 0;
+
+    do {
+      const response = await searchContactsNeedingSync(after);
+      const results = response.data?.results || [];
+
+      scanned += results.length;
+
+      const contactsToSync = results.filter((contact) => {
+        const status = contact.properties?.alleva_sync_status;
+        return !status || status === "failed";
+      });
+
+      matched += contactsToSync.length;
+
+      for (const contact of contactsToSync) {
+        try {
+          await syncHubSpotContact(contact.id);
+          processed += 1;
+        } catch (error) {
+          failed += 1;
+          console.error(
+            `Polling sync failed for contact ${contact.id}:`,
+            error.message
+          );
+        }
+      }
+
+      after = response.data?.paging?.next?.after || null;
+    } while (after);
+
+    res.json({
+      ok: true,
+      scanned,
+      matched,
+      processed,
+      failed
+    });
+  } catch (error) {
+    console.error("Polling error:", error.response?.data || error.message);
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
     });
   }
 });
