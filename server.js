@@ -7,8 +7,8 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
-const ALLEVA_CLIENT_ID = 
-process.env.ALLEVA_CLIENT_ID;
+const ALLEVA_CLIENT_ID =
+  process.env.ALLEVA_CLIENT_ID;
 const ALLEVA_CLIENT_SECRET = process.env.ALLEVA_CLIENT_SECRET;
 const ALLEVA_TOKEN_URL = process.env.ALLEVA_TOKEN_URL;
 const ALLEVA_API_BASE = process.env.ALLEVA_API_BASE;
@@ -68,7 +68,10 @@ function mapCountry(value) {
 }
 
 function mapStateName(value) {
-  const normalized = safeTrim(value).toUpperCase();
+  const trimmed = safeTrim(value);
+  if (!trimmed) return "";
+
+  const normalized = trimmed.toUpperCase();
 
   const stateMap = {
     AL: "Alabama",
@@ -123,7 +126,7 @@ function mapStateName(value) {
     WY: "Wyoming"
   };
 
-  return stateMap[normalized] || "";
+  return stateMap[normalized] || trimmed;
 }
 
 function compact(obj) {
@@ -246,8 +249,7 @@ async function syncHubSpotContact(hubspotContactId) {
     const address1 = safeTrim(props.pt__address);
     const address2 = safeTrim(props.pt__address_2);
     const city = safeTrim(props.pt__city);
-    const stateAbbr = safeTrim(props.pt__state).toUpperCase();
-    const stateName = mapStateName(stateAbbr);
+    const stateName = mapStateName(props.pt__state);
     const zipCode = safeTrim(props.pt__zip_code);
     const country = mapCountry(props.pt__country);
     const email = safeTrim(props.pt__email);
@@ -262,14 +264,13 @@ async function syncHubSpotContact(hubspotContactId) {
       email,
       gender,
       phone: {
-        number: phoneNumber
+        other: phoneNumber
       },
       address: {
         line1: address1,
         line2: address2,
         city,
         state: stateName,
-        stateAbbr,
         country,
         zipCode
       }
