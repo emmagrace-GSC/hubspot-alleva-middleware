@@ -7,8 +7,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
-const ALLEVA_CLIENT_ID =
-  process.env.ALLEVA_CLIENT_ID;
+const ALLEVA_CLIENT_ID = process.env.ALLEVA_CLIENT_ID;
 const ALLEVA_CLIENT_SECRET = process.env.ALLEVA_CLIENT_SECRET;
 const ALLEVA_TOKEN_URL = process.env.ALLEVA_TOKEN_URL;
 const ALLEVA_API_BASE = process.env.ALLEVA_API_BASE;
@@ -32,12 +31,10 @@ function formatHubSpotDate(value) {
   const trimmed = safeTrim(value);
   if (!trimmed) return null;
 
-  // Keep YYYY-MM-DD as-is for now
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
     return trimmed;
   }
 
-  // Convert MM/DD/YYYY to YYYY-MM-DD
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
     const [mm, dd, yyyy] = trimmed.split("/");
     return `${yyyy}-${mm}-${dd}`;
@@ -51,20 +48,17 @@ function formatHubSpotDate(value) {
   return null;
 }
 
-function mapGender(value) {
-  const normalized = safeTrim(value).toLowerCase();
-
-  if (normalized === "female") return "Female";
-  if (normalized === "male") return "Male";
-
-  return safeTrim(value);
-}
-
 function mapCountry(value) {
   const normalized = safeTrim(value).toLowerCase();
 
-  if (normalized === "united_states") return "United States";
-  return safeTrim(value);
+  const countryMap = {
+    united_states: "United States",
+    "united states": "United States",
+    us: "United States",
+    usa: "United States"
+  };
+
+  return countryMap[normalized] || safeTrim(value);
 }
 
 function mapStateName(value) {
@@ -135,7 +129,7 @@ function compact(obj) {
       .filter(([, value]) => {
         if (value === null || value === undefined) return false;
         if (typeof value === "string" && value.trim() === "") return false;
-        if (typeof value === "object" && !Array.isArray(value)) {
+        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
           return Object.keys(compact(value)).length > 0;
         }
         return true;
@@ -208,6 +202,7 @@ async function allevaRequest(method, url, data = null, params = null) {
   } catch (error) {
     if (error.response?.status === 401) {
       token = await getAllevaToken(true);
+
       return await axios({
         method,
         url: `${ALLEVA_API_BASE}${url}`,
@@ -220,6 +215,7 @@ async function allevaRequest(method, url, data = null, params = null) {
         params
       });
     }
+
     throw error;
   }
 }
@@ -232,7 +228,7 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties:
-          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
+          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,phone,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
       }
     );
 
@@ -242,37 +238,39 @@ async function syncHubSpotContact(hubspotContactId) {
 
     const firstName = safeTrim(props.pt__first_name);
     const lastName = safeTrim(props.pt__last_name);
-    const phoneNumber = normalizePhone(
-      props.pt__alternative_phone_for_consumer || props.pt__primary_phone
-    );
     const dob = formatHubSpotDate(props.pt__consumers_dob);
-    const address1 = safeTrim(props.pt__address);
-    const address2 = safeTrim(props.pt__address_2);
-    const city = safeTrim(props.pt__city);
-    const stateName = mapStateName(props.pt__state);
-    const zipCode = safeTrim(props.pt__zip_code);
     const country = mapCountry(props.pt__country);
-    const email = safeTrim(props.pt__email);
-    const gender = mapGender(props.pt__gender);
+    const state = mapStateName(props.pt__state);
+
+    const prospectPhone = normalizePhone(props.pt__primary_phone);
+    const primaryContactPhone = normalizePhone(
+      props.phone || props.pt__alternative_phone_for_consumer || props.pt__primary_phone
+    );
+
+    if (!firstName || !lastName || !dob || !country || !state || !prospectPhone) {
+      const missingFields = [];
+
+      if (!firstName) missingFields.push("pt__first_name");
+      if (!lastName) missingFields.push("pt__last_name");
+      if (!dob) missingFields.push("pt__consumers_dob");
+      if (!country) missingFields.push("pt__country");
+      if (!state) missingFields.push("pt__state");
+      if (!prospectPhone) missingFields.push("pt__primary_phone");
+
+      throw new Error(
+        `Missing required HubSpot fields for Alleva sync: ${missingFields.join(", ")}`
+      );
+    }
 
     const allevaPayload = compact({
-      name: {
-        first: firstName,
-        last: lastName
-      },
+      firstName,
+      lastName,
       dateOfBirth: dob,
-      email,
-      gender,
-      phone: {
-        other: phoneNumber
-      },
-      address: {
-        line1: address1,
-        line2: address2,
-        city,
-        state: stateName,
-        country,
-        zipCode
+      mobile: prospectPhone,
+      country,
+      state,
+      primaryContact: {
+        mobile: primaryContactPhone || prospectPhone
       }
     });
 
@@ -284,6 +282,10 @@ async function syncHubSpotContact(hubspotContactId) {
     console.log("Testing HubSpot contact:", hubspotContactId);
     console.log("Alleva request method:", allevaMethod);
     console.log("Alleva request URL:", allevaUrl);
+    console.log("HubSpot pt__primary_phone:", props.pt__primary_phone);
+    console.log("HubSpot phone:", props.phone);
+    console.log("Prospect mobile:", prospectPhone);
+    console.log("Primary contact mobile:", primaryContactPhone || prospectPhone);
     console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
 
     const allevaResponse = await allevaRequest(
@@ -297,10 +299,15 @@ async function syncHubSpotContact(hubspotContactId) {
       JSON.stringify(allevaResponse.data, null, 2)
     );
 
+    const responseData = allevaResponse.data;
+
     const allevaPatientId =
-      allevaResponse.data?.patientId ||
-      allevaResponse.data?.id ||
-      allevaResponse.data?.result ||
+      responseData?.patientId ||
+      responseData?.id ||
+      responseData?.result ||
+      responseData?.prospectId ||
+      responseData?.data?.patientId ||
+      responseData?.data?.id ||
       props.alleva_patient_id ||
       "";
 
@@ -330,11 +337,16 @@ async function syncHubSpotContact(hubspotContactId) {
 
     console.error(`Sync failed for HubSpot contact ${hubspotContactId}`);
     console.error("Alleva response status:", error.response?.status);
+    console.error("Alleva response headers:", error.response?.headers);
     console.error(
       "Alleva response data:",
       typeof error.response?.data === "string"
         ? error.response.data
         : JSON.stringify(error.response?.data, null, 2)
+    );
+    console.error(
+      "Axios error JSON:",
+      error.toJSON ? JSON.stringify(error.toJSON(), null, 2) : error.message
     );
     console.error("Full error message:", error.message);
 
@@ -388,6 +400,7 @@ async function searchContactsNeedingSync(after = null) {
       "pt__zip_code",
       "pt__state",
       "pt__primary_phone",
+      "phone",
       "pt__email",
       "pt__country",
       "pt__ethnicityrace",
