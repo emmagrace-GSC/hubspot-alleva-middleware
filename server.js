@@ -298,18 +298,18 @@ async function syncHubSpotContact(hubspotContactId) {
     }
 
     const allevaPayload = compact({
-      firstName,
-      lastName,
-      dateOfBirth: dob,
-      mobile: prospectPhone,
-      country,
-      state,
-      primaryContact: {
-        firstName: primaryContactFirstName,
-        relation: relationshipToPatient,
-        mobile: primaryContactPhone
-      }
-    });
+  firstName,
+  lastName,
+  dateOfBirth: dob,
+  other: prospectPhone,
+  country,
+  state,
+  primaryContact: {
+    firstName: primaryContactFirstName,
+    relation: relationshipToPatient,
+    other: primaryContactPhone
+  }
+});
 
     const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
     const allevaUrl = props.alleva_patient_id
