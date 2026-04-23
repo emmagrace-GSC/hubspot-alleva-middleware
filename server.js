@@ -24,7 +24,14 @@ function safeTrim(value) {
 function normalizePhone(value) {
   const trimmed = safeTrim(value);
   if (!trimmed) return "";
-  return trimmed.replace(/\D/g, "");
+
+  let digits = trimmed.replace(/\D/g, "");
+
+  if (digits.length === 11 && digits.startsWith("1")) {
+    digits = digits.slice(1);
+  }
+
+  return digits;
 }
 
 function formatHubSpotDate(value) {
@@ -143,6 +150,10 @@ function compact(obj) {
   );
 }
 
+function isValidUsTenDigitPhone(value) {
+  return /^\d{10}$/.test(value);
+}
+
 async function getAllevaToken(forceRefresh = false) {
   const now = Date.now();
 
@@ -228,7 +239,7 @@ async function syncHubSpotContact(hubspotContactId) {
       null,
       {
         properties:
-          "pt__first_name,pt__last_name,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,phone,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
+          "pt__first_name,pt__last_name,firstname,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,phone,relationship_to_patient,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
       }
     );
 
@@ -243,9 +254,9 @@ async function syncHubSpotContact(hubspotContactId) {
     const state = mapStateName(props.pt__state);
 
     const prospectPhone = normalizePhone(props.pt__primary_phone);
-    const primaryContactPhone = normalizePhone(
-      props.phone || props.pt__alternative_phone_for_consumer || props.pt__primary_phone
-    );
+    const primaryContactPhone = normalizePhone(props.phone);
+    const primaryContactFirstName = safeTrim(props.firstname);
+    const relationshipToPatient = safeTrim(props.relationship_to_patient);
 
     if (!firstName || !lastName || !dob || !country || !state || !prospectPhone) {
       const missingFields = [];
@@ -258,7 +269,31 @@ async function syncHubSpotContact(hubspotContactId) {
       if (!prospectPhone) missingFields.push("pt__primary_phone");
 
       throw new Error(
-        `Missing required HubSpot fields for Alleva sync: ${missingFields.join(", ")}`
+        `Missing required HubSpot fields for prospect: ${missingFields.join(", ")}`
+      );
+    }
+
+    if (!primaryContactPhone || !primaryContactFirstName || !relationshipToPatient) {
+      const missingPrimaryFields = [];
+
+      if (!primaryContactPhone) missingPrimaryFields.push("phone");
+      if (!primaryContactFirstName) missingPrimaryFields.push("firstname");
+      if (!relationshipToPatient) missingPrimaryFields.push("relationship_to_patient");
+
+      throw new Error(
+        `Missing required HubSpot fields for primary contact: ${missingPrimaryFields.join(", ")}`
+      );
+    }
+
+    if (!isValidUsTenDigitPhone(prospectPhone)) {
+      throw new Error(
+        `Invalid prospect mobile for Alleva: ${props.pt__primary_phone} -> ${prospectPhone}`
+      );
+    }
+
+    if (!isValidUsTenDigitPhone(primaryContactPhone)) {
+      throw new Error(
+        `Invalid primary contact mobile for Alleva: ${props.phone} -> ${primaryContactPhone}`
       );
     }
 
@@ -270,7 +305,9 @@ async function syncHubSpotContact(hubspotContactId) {
       country,
       state,
       primaryContact: {
-        mobile: primaryContactPhone || prospectPhone
+        firstName: primaryContactFirstName,
+        relation: relationshipToPatient,
+        mobile: primaryContactPhone
       }
     });
 
@@ -284,8 +321,12 @@ async function syncHubSpotContact(hubspotContactId) {
     console.log("Alleva request URL:", allevaUrl);
     console.log("HubSpot pt__primary_phone:", props.pt__primary_phone);
     console.log("HubSpot phone:", props.phone);
+    console.log("HubSpot firstname:", props.firstname);
+    console.log("HubSpot relationship_to_patient:", props.relationship_to_patient);
     console.log("Prospect mobile:", prospectPhone);
-    console.log("Primary contact mobile:", primaryContactPhone || prospectPhone);
+    console.log("Primary contact first name:", primaryContactFirstName);
+    console.log("Primary contact relation:", relationshipToPatient);
+    console.log("Primary contact mobile:", primaryContactPhone);
     console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
 
     const allevaResponse = await allevaRequest(
@@ -392,6 +433,7 @@ async function searchContactsNeedingSync(after = null) {
     properties: [
       "pt__first_name",
       "pt__last_name",
+      "firstname",
       "pt__address",
       "pt__address_2",
       "pt__alternative_phone_for_consumer",
@@ -401,6 +443,7 @@ async function searchContactsNeedingSync(after = null) {
       "pt__state",
       "pt__primary_phone",
       "phone",
+      "relationship_to_patient",
       "pt__email",
       "pt__country",
       "pt__ethnicityrace",
