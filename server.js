@@ -11,6 +11,10 @@ const ALLEVA_CLIENT_ID = process.env.ALLEVA_CLIENT_ID;
 const ALLEVA_CLIENT_SECRET = process.env.ALLEVA_CLIENT_SECRET;
 const ALLEVA_TOKEN_URL = process.env.ALLEVA_TOKEN_URL;
 const ALLEVA_API_BASE = process.env.ALLEVA_API_BASE;
+const ALLEVA_FACILITY_NAME =
+  process.env.ALLEVA_FACILITY_NAME || "Advocate Support Services";
+const ALLEVA_DEFAULT_STATUS =
+  process.env.ALLEVA_DEFAULT_STATUS || "Active";
 
 let tokenCache = {
   accessToken: null,
@@ -128,6 +132,15 @@ function mapStateName(value) {
   };
 
   return stateMap[normalized] || trimmed;
+}
+
+function mapGender(value) {
+  const normalized = safeTrim(value).toLowerCase();
+
+  if (normalized === "female") return "Female";
+  if (normalized === "male") return "Male";
+
+  return safeTrim(value);
 }
 
 function compact(obj) {
@@ -252,6 +265,13 @@ async function syncHubSpotContact(hubspotContactId) {
     const dob = formatHubSpotDate(props.pt__consumers_dob);
     const country = mapCountry(props.pt__country);
     const state = mapStateName(props.pt__state);
+    const gender = mapGender(props.pt__gender);
+
+    const address1 = safeTrim(props.pt__address);
+    const address2 = safeTrim(props.pt__address_2);
+    const city = safeTrim(props.pt__city);
+    const zipCode = safeTrim(props.pt__zip_code);
+    const email = safeTrim(props.pt__email);
 
     const prospectPhone = normalizePhone(props.pt__primary_phone);
     const primaryContactPhone = normalizePhone(props.phone);
@@ -287,29 +307,45 @@ async function syncHubSpotContact(hubspotContactId) {
 
     if (!isValidUsTenDigitPhone(prospectPhone)) {
       throw new Error(
-        `Invalid prospect mobile for Alleva: ${props.pt__primary_phone} -> ${prospectPhone}`
+        `Invalid prospect phone for Alleva: ${props.pt__primary_phone} -> ${prospectPhone}`
       );
     }
 
     if (!isValidUsTenDigitPhone(primaryContactPhone)) {
       throw new Error(
-        `Invalid primary contact mobile for Alleva: ${props.phone} -> ${primaryContactPhone}`
+        `Invalid primary contact phone for Alleva: ${props.phone} -> ${primaryContactPhone}`
       );
     }
 
     const allevaPayload = compact({
-  firstName,
-  lastName,
-  dateOfBirth: dob,
-  other: prospectPhone,
-  country,
-  state,
-  primaryContact: {
-    firstName: primaryContactFirstName,
-    relation: relationshipToPatient,
-    other: primaryContactPhone
-  }
-});
+      name: {
+        first: firstName,
+        last: lastName
+      },
+      gender,
+      dateOfBirth: dob,
+      address: {
+        line1: address1,
+        line2: address2,
+        city,
+        state,
+        country,
+        zipCode
+      },
+      phone: {
+        other: prospectPhone
+      },
+      email,
+      contact: {
+        name: primaryContactFirstName,
+        phone: primaryContactPhone,
+        relationship: relationshipToPatient,
+        isPrimary: true,
+        isEmergencyContact: false
+      },
+      facilityName: ALLEVA_FACILITY_NAME,
+      status: ALLEVA_DEFAULT_STATUS
+    });
 
     const allevaMethod = props.alleva_patient_id ? "PATCH" : "POST";
     const allevaUrl = props.alleva_patient_id
@@ -323,16 +359,17 @@ async function syncHubSpotContact(hubspotContactId) {
     console.log("HubSpot phone:", props.phone);
     console.log("HubSpot firstname:", props.firstname);
     console.log("HubSpot relationship_to_patient:", props.relationship_to_patient);
-    console.log("Prospect mobile:", prospectPhone);
-    console.log("Primary contact first name:", primaryContactFirstName);
-    console.log("Primary contact relation:", relationshipToPatient);
-    console.log("Primary contact mobile:", primaryContactPhone);
+    console.log("Prospect phone:", prospectPhone);
+    console.log("Primary contact name:", primaryContactFirstName);
+    console.log("Primary contact relationship:", relationshipToPatient);
+    console.log("Primary contact phone:", primaryContactPhone);
     console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
 
     const allevaResponse = await allevaRequest(
       allevaMethod,
       allevaUrl,
-      allevaPayload
+      allevaPayload,
+      { "api-version": "1.0" }
     );
 
     console.log(
