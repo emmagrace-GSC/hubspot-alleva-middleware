@@ -1,6 +1,14 @@
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
+const {
+  generateHubSpotSubmissionPdf,
+  generateSamplePdf
+} = require("./pdfHelper");
+const {
+  getAllevaDocumentTypes,
+  uploadAllevaDocument
+} = require("./allevaDocuments");
 
 const app = express();
 app.use(express.json());
@@ -15,6 +23,37 @@ const ALLEVA_FACILITY_NAME =
   process.env.ALLEVA_FACILITY_NAME || "Advocate Support Services";
 const ALLEVA_DEFAULT_STATUS =
   process.env.ALLEVA_DEFAULT_STATUS || "Active";
+const ALLEVA_DOCUMENT_TYPE_ID = process.env.ALLEVA_DOCUMENT_TYPE_ID;
+
+const HUBSPOT_SYNC_PROPERTIES = [
+  "pt__first_name",
+  "pt__last_name",
+  "firstname",
+  "pt__address",
+  "pt__address_2",
+  "pt__alternative_phone_for_consumer",
+  "pt__city",
+  "pt__consumers_dob",
+  "pt__zip_code",
+  "pt__state",
+  "pt__primary_phone",
+  "phone",
+  "relationship_to_patient",
+  "pt__email",
+  "pt__country",
+  "pt__ethnicityrace",
+  "pt__gender",
+  "pt__pronouns",
+  "pt__client_identifies_as",
+  "alleva_patient_id",
+  "alleva_sync_status",
+  "alleva_last_sync_at",
+  "alleva_sync_error",
+  "alleva_pdf_upload_status",
+  "alleva_pdf_upload_at",
+  "alleva_pdf_document_type_id",
+  "alleva_pdf_upload_error"
+];
 
 let tokenCache = {
   accessToken: null,
@@ -244,6 +283,121 @@ async function allevaRequest(method, url, data = null, params = null) {
   }
 }
 
+function extractAllevaLeadId(responseData, existingAllevaPatientId = "") {
+  const leadId =
+    responseData?.leadId ||
+    responseData?.patientId ||
+    responseData?.id ||
+    responseData?.prospectId ||
+    responseData?.result?.leadId ||
+    responseData?.result?.patientId ||
+    responseData?.result?.id ||
+    responseData?.result?.prospectId ||
+    responseData?.result ||
+    responseData?.data?.leadId ||
+    responseData?.data?.patientId ||
+    responseData?.data?.id ||
+    responseData?.data?.prospectId ||
+    existingAllevaPatientId ||
+    "";
+
+  if (typeof leadId === "object") return "";
+
+  return leadId;
+}
+
+async function updateHubSpotPdfUploadStatus(hubspotContactId, statusFields) {
+  try {
+    await hubspotRequest(
+      "PATCH",
+      `/crm/v3/objects/contacts/${hubspotContactId}`,
+      {
+        properties: {
+          alleva_pdf_upload_status: statusFields.status || "",
+          alleva_pdf_upload_at: statusFields.uploadedAt || "",
+          alleva_pdf_document_type_id: statusFields.documentTypeId
+            ? String(statusFields.documentTypeId)
+            : "",
+          alleva_pdf_upload_error: statusFields.error
+            ? String(statusFields.error).slice(0, 65000)
+            : ""
+        }
+      }
+    );
+  } catch (error) {
+    console.error(
+      "Could not update HubSpot PDF upload fields:",
+      error.response?.data || error.message
+    );
+  }
+}
+
+async function uploadHubSpotSummaryPdf({
+  hubspotContact,
+  hubspotContactId,
+  leadId
+}) {
+  if (!leadId) {
+    throw new Error("Cannot generate or upload summary PDF because Alleva leadId is missing");
+  }
+
+  if (!ALLEVA_DOCUMENT_TYPE_ID) {
+    throw new Error("Missing ALLEVA_DOCUMENT_TYPE_ID environment variable");
+  }
+
+  await updateHubSpotPdfUploadStatus(hubspotContactId, {
+    status: "generating_pdf",
+    documentTypeId: ALLEVA_DOCUMENT_TYPE_ID
+  });
+
+  const pdfBuffer = await generateHubSpotSubmissionPdf(hubspotContact, {
+    hubspotContactId,
+    leadId
+  });
+
+  await updateHubSpotPdfUploadStatus(hubspotContactId, {
+    status: "uploading_to_alleva",
+    documentTypeId: ALLEVA_DOCUMENT_TYPE_ID
+  });
+
+  const uploadResponse = await uploadAllevaDocument({
+    allevaApiBase: ALLEVA_API_BASE,
+    getAccessToken: getAllevaToken,
+    leadId,
+    typeId: ALLEVA_DOCUMENT_TYPE_ID,
+    pdfBuffer,
+    filename: `hubspot-formstack-summary-${hubspotContactId}.pdf`
+  });
+
+  console.log(
+    "Alleva document upload response:",
+    JSON.stringify(
+      {
+        leadId,
+        typeId: ALLEVA_DOCUMENT_TYPE_ID,
+        status: uploadResponse.status,
+        data: uploadResponse.data,
+        createdDocumentId: uploadResponse.createdDocumentId,
+        verification: uploadResponse.verification,
+        manualVerificationRequired: uploadResponse.manualVerificationRequired
+      },
+      null,
+      2
+    )
+  );
+
+  await updateHubSpotPdfUploadStatus(hubspotContactId, {
+    status: "uploaded_needs_manual_verification",
+    uploadedAt: new Date().toISOString(),
+    documentTypeId: ALLEVA_DOCUMENT_TYPE_ID
+  });
+
+  return {
+    ok: true,
+    ...uploadResponse
+  };
+}
+
 async function syncHubSpotContact(hubspotContactId) {
   try {
     const hsContact = await hubspotRequest(
@@ -251,8 +405,7 @@ async function syncHubSpotContact(hubspotContactId) {
       `/crm/v3/objects/contacts/${hubspotContactId}`,
       null,
       {
-        properties:
-          "pt__first_name,pt__last_name,firstname,pt__address,pt__address_2,pt__alternative_phone_for_consumer,pt__city,pt__consumers_dob,pt__zip_code,pt__state,pt__primary_phone,phone,relationship_to_patient,pt__email,pt__country,pt__ethnicityrace,pt__gender,pt__pronouns,pt__client_identifies_as,alleva_patient_id,alleva_sync_status,alleva_last_sync_at,alleva_sync_error"
+        properties: HUBSPOT_SYNC_PROPERTIES.join(",")
       }
     );
 
@@ -379,15 +532,16 @@ async function syncHubSpotContact(hubspotContactId) {
 
     const responseData = allevaResponse.data;
 
-    const allevaPatientId =
-      responseData?.patientId ||
-      responseData?.id ||
-      responseData?.result ||
-      responseData?.prospectId ||
-      responseData?.data?.patientId ||
-      responseData?.data?.id ||
-      props.alleva_patient_id ||
-      "";
+    const allevaPatientId = extractAllevaLeadId(
+      responseData,
+      props.alleva_patient_id
+    );
+
+    if (!allevaPatientId) {
+      throw new Error(
+        `Alleva prospect response did not include a lead/prospect ID: ${JSON.stringify(responseData)}`
+      );
+    }
 
     await hubspotRequest(
       "PATCH",
@@ -402,10 +556,51 @@ async function syncHubSpotContact(hubspotContactId) {
       }
     );
 
+    let pdfUpload = null;
+
+    if (props.alleva_pdf_upload_status === "uploaded_needs_manual_verification") {
+      pdfUpload = {
+        ok: true,
+        skipped: true,
+        status: props.alleva_pdf_upload_status,
+        message: "PDF upload already recorded in HubSpot"
+      };
+    } else {
+      try {
+        pdfUpload = await uploadHubSpotSummaryPdf({
+          hubspotContact: hsContact.data,
+          hubspotContactId,
+          leadId: allevaPatientId
+        });
+      } catch (pdfError) {
+        const pdfErrorText = pdfError.response?.data
+          ? JSON.stringify(pdfError.response.data)
+          : pdfError.message;
+
+        console.error(
+          `PDF upload failed for HubSpot contact ${hubspotContactId} / Alleva lead ${allevaPatientId}:`,
+          pdfErrorText
+        );
+
+        await updateHubSpotPdfUploadStatus(hubspotContactId, {
+          status: "failed",
+          uploadedAt: new Date().toISOString(),
+          documentTypeId: ALLEVA_DOCUMENT_TYPE_ID,
+          error: pdfErrorText
+        });
+
+        pdfUpload = {
+          ok: false,
+          error: pdfErrorText
+        };
+      }
+    }
+
     return {
       ok: true,
       hubspotContactId,
       allevaPatientId,
+      pdfUpload,
       allevaResponse: allevaResponse.data
     };
   } catch (error) {
@@ -468,29 +663,7 @@ async function searchContactsNeedingSync(after = null) {
       }
     ],
     properties: [
-      "pt__first_name",
-      "pt__last_name",
-      "firstname",
-      "pt__address",
-      "pt__address_2",
-      "pt__alternative_phone_for_consumer",
-      "pt__city",
-      "pt__consumers_dob",
-      "pt__zip_code",
-      "pt__state",
-      "pt__primary_phone",
-      "phone",
-      "relationship_to_patient",
-      "pt__email",
-      "pt__country",
-      "pt__ethnicityrace",
-      "pt__gender",
-      "pt__pronouns",
-      "pt__client_identifies_as",
-      "alleva_patient_id",
-      "alleva_sync_status",
-      "alleva_last_sync_at",
-      "alleva_sync_error"
+      ...HUBSPOT_SYNC_PROPERTIES
     ],
     limit: 100,
     sorts: [
@@ -524,6 +697,146 @@ app.get("/test-alleva-token", async (req, res) => {
       tokenPreview: token.substring(0, 20) + "..."
     });
   } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+app.get("/alleva/document-types", async (req, res) => {
+  try {
+    const response = await getAllevaDocumentTypes({
+      allevaApiBase: ALLEVA_API_BASE,
+      getAccessToken: getAllevaToken
+    });
+
+    res.json({
+      ok: true,
+      data: response.data
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+app.post("/test-alleva-document-upload", async (req, res) => {
+  try {
+    const { leadId, typeId } = req.body;
+    const documentTypeId = typeId || ALLEVA_DOCUMENT_TYPE_ID;
+
+    if (!leadId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing leadId"
+      });
+    }
+
+    if (!documentTypeId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing typeId or ALLEVA_DOCUMENT_TYPE_ID"
+      });
+    }
+
+    const pdfBuffer = await generateSamplePdf(leadId);
+    const uploadResponse = await uploadAllevaDocument({
+      allevaApiBase: ALLEVA_API_BASE,
+      getAccessToken: getAllevaToken,
+      leadId,
+      typeId: documentTypeId,
+      pdfBuffer,
+      filename: `alleva-document-upload-test-${leadId}.pdf`
+    });
+
+    console.log(
+      "Alleva test document upload response:",
+      JSON.stringify(
+        {
+          leadId,
+          typeId: documentTypeId,
+          status: uploadResponse.status,
+          data: uploadResponse.data,
+          manualVerificationRequired: uploadResponse.manualVerificationRequired
+        },
+        null,
+        2
+      )
+    );
+
+    res.json({
+      ok: true,
+      leadId,
+      typeId: String(documentTypeId),
+      uploadStatusCode: uploadResponse.status,
+      manualVerificationRequired: true,
+      message:
+        "Alleva returned a 2xx response. Manually verify this sample PDF appears on the Prospective Client record in Alleva.",
+      allevaResponse: uploadResponse.data,
+      createdDocumentId: uploadResponse.createdDocumentId,
+      allevaDocumentVerification: uploadResponse.verification
+    });
+  } catch (error) {
+    console.error(
+      "Test Alleva document upload failed:",
+      error.response?.data || error.message
+    );
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+app.post("/test-hubspot-summary-pdf-upload", async (req, res) => {
+  try {
+    const { hubspotContactId, leadId } = req.body;
+
+    if (!hubspotContactId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing hubspotContactId"
+      });
+    }
+
+    const hsContact = await hubspotRequest(
+      "GET",
+      `/crm/v3/objects/contacts/${hubspotContactId}`,
+      null,
+      {
+        properties: HUBSPOT_SYNC_PROPERTIES.join(",")
+      }
+    );
+    const props = hsContact.data.properties || {};
+    const allevaLeadId = leadId || props.alleva_patient_id;
+
+    if (!allevaLeadId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing leadId and HubSpot contact has no alleva_patient_id"
+      });
+    }
+
+    const uploadResponse = await uploadHubSpotSummaryPdf({
+      hubspotContact: hsContact.data,
+      hubspotContactId,
+      leadId: allevaLeadId
+    });
+
+    res.json({
+      ok: true,
+      hubspotContactId,
+      leadId: String(allevaLeadId),
+      upload: uploadResponse
+    });
+  } catch (error) {
+    console.error(
+      "Test HubSpot summary PDF upload failed:",
+      error.response?.data || error.message
+    );
     res.status(500).json({
       ok: false,
       error: error.response?.data || error.message
