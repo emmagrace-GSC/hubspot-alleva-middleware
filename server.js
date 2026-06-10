@@ -23,6 +23,8 @@ const ALLEVA_FACILITY_NAME =
   process.env.ALLEVA_FACILITY_NAME || "Advocate Support Services";
 const ALLEVA_DEFAULT_STATUS =
   process.env.ALLEVA_DEFAULT_STATUS || "Active";
+const ALLEVA_DEFAULT_COUNTRY =
+  process.env.ALLEVA_DEFAULT_COUNTRY || "United States";
 const ALLEVA_DOCUMENT_TYPE_ID = process.env.ALLEVA_DOCUMENT_TYPE_ID;
 
 const HUBSPOT_SYNC_PROPERTIES = [
@@ -416,7 +418,7 @@ async function syncHubSpotContact(hubspotContactId) {
     const firstName = safeTrim(props.pt__first_name);
     const lastName = safeTrim(props.pt__last_name);
     const dob = formatHubSpotDate(props.pt__consumers_dob);
-    const country = mapCountry(props.pt__country);
+    const country = mapCountry(props.pt__country) || ALLEVA_DEFAULT_COUNTRY;
     const state = mapStateName(props.pt__state);
     const gender = mapGender(props.pt__gender);
 
@@ -431,13 +433,12 @@ async function syncHubSpotContact(hubspotContactId) {
     const primaryContactFirstName = safeTrim(props.firstname);
     const relationshipToPatient = safeTrim(props.relationship_to_patient);
 
-    if (!firstName || !lastName || !dob || !country || !state || !prospectPhone) {
+    if (!firstName || !lastName || !dob || !state || !prospectPhone) {
       const missingFields = [];
 
       if (!firstName) missingFields.push("pt__first_name");
       if (!lastName) missingFields.push("pt__last_name");
       if (!dob) missingFields.push("pt__consumers_dob");
-      if (!country) missingFields.push("pt__country");
       if (!state) missingFields.push("pt__state");
       if (!prospectPhone) missingFields.push("pt__primary_phone");
 
@@ -446,12 +447,11 @@ async function syncHubSpotContact(hubspotContactId) {
       );
     }
 
-    if (!primaryContactPhone || !primaryContactFirstName || !relationshipToPatient) {
+    if (!primaryContactPhone || !primaryContactFirstName) {
       const missingPrimaryFields = [];
 
       if (!primaryContactPhone) missingPrimaryFields.push("phone");
       if (!primaryContactFirstName) missingPrimaryFields.push("firstname");
-      if (!relationshipToPatient) missingPrimaryFields.push("relationship_to_patient");
 
       throw new Error(
         `Missing required HubSpot fields for primary contact: ${missingPrimaryFields.join(", ")}`
