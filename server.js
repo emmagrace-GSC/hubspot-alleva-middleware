@@ -26,11 +26,16 @@ const ALLEVA_DEFAULT_STATUS =
 const ALLEVA_DEFAULT_COUNTRY =
   process.env.ALLEVA_DEFAULT_COUNTRY || "United States";
 const ALLEVA_DOCUMENT_TYPE_ID = process.env.ALLEVA_DOCUMENT_TYPE_ID;
+const REFERRAL_FORM_LINK =
+  process.env.REFERRAL_FORM_LINK ||
+  "advocatesupport.formstack.com/forms/advocate_referral_2026";
 
 const HUBSPOT_SYNC_PROPERTIES = [
   "pt__first_name",
   "pt__last_name",
   "firstname",
+  "lastname",
+  "email",
   "pt__address",
   "pt__address_2",
   "pt__alternative_phone_for_consumer",
@@ -38,9 +43,36 @@ const HUBSPOT_SYNC_PROPERTIES = [
   "pt__consumers_dob",
   "pt__zip_code",
   "pt__state",
+  "pt__state_sensitive",
+  "pt__address_sensitive",
+  "pt__address_2_sensitive",
+  "pt__city_sensitive",
+  "pt__zip_code_sensitive",
+  "pt__date_of_birth",
+  "pt__maryland_medicaid__medical_assistance_number",
+  "pt__medication_provider_info",
+  "pt__primary_diagnosis_sensitive",
+  "pt__secondary_diagnosis_sensitive",
   "pt__primary_phone",
   "phone",
   "relationship_to_patient",
+  "address", "city", "state", "zip", "country",
+  "date_of_birth", "date_of_birth_date", "migrated_birthdate", "gender",
+  "form_link", "recent_conversion_event_name",
+  "person_who_completed_form_first_name",
+  "person_who_completed_form_last_name",
+  "person_who_completed_form_phone",
+  "person_who_completed_form_email",
+  "referral_source_type", "referring_organization__practice_name",
+  "referring_provider_first_name", "referring_provider_middle_name",
+  "referring_provider_last_name", "referring_provider_suffix",
+  "referring_provider_email", "provider_email", "provider_phone",
+  "credentials", "credentials_dropdown", "referring_provider_license_number",
+  "your_national_provider_identifier_npi_with_active_medicaid",
+  "supervisor_first_name", "supervisor_middle_name", "supervisor_last_name",
+  "supervisor_suffix", "supervisors_credentials", "supervisor_license_number",
+  "supervisor_individual_npi", "referral_attestations", "typed_name_of_signer",
+  "date_and_time_signed",
   "pt__email",
   "pt__country",
   "pt__ethnicityrace",
@@ -64,6 +96,18 @@ let tokenCache = {
 
 function safeTrim(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function firstPresent(...values) {
+  for (const value of values) {
+    const trimmed = safeTrim(value);
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
+function joinName(...parts) {
+  return parts.map(safeTrim).filter(Boolean).join(" ");
 }
 
 function normalizePhone(value) {
@@ -308,6 +352,68 @@ function extractAllevaLeadId(responseData, existingAllevaPatientId = "") {
   return leadId;
 }
 
+function getAllevaDuplicateResults(responseData) {
+  if (Array.isArray(responseData)) return responseData;
+  if (Array.isArray(responseData?.data)) return responseData.data;
+  if (Array.isArray(responseData?.results)) return responseData.results;
+  return [];
+}
+
+function getAllevaDuplicateLeadId(duplicate) {
+  const leadId =
+    duplicate?.leadId ||
+    duplicate?.id ||
+    duplicate?.prospectId ||
+    duplicate?.clientId;
+
+  return leadId && typeof leadId !== "object" ? leadId : "";
+}
+
+function isAllevaEmailInUseError(error) {
+  if (error.response?.status !== 422) return false;
+
+  const responseText = JSON.stringify(error.response?.data || "").toLowerCase();
+  return responseText.includes("email address is already in use");
+}
+
+async function findAllevaDuplicateByEmail(email) {
+  const normalizedEmail = safeTrim(email).toLowerCase();
+  if (!normalizedEmail) return null;
+
+  const response = await allevaRequest(
+    "GET",
+    "/clients/duplicates",
+    null,
+    {
+      email: normalizedEmail,
+      "api-version": "1.0"
+    }
+  );
+
+  const matches = getAllevaDuplicateResults(response.data).filter(
+    duplicate => safeTrim(duplicate?.email).toLowerCase() === normalizedEmail
+  );
+
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    throw new Error(
+      `Alleva returned multiple records for email ${normalizedEmail}; manual review is required`
+    );
+  }
+
+  const leadId = getAllevaDuplicateLeadId(matches[0]);
+  if (!leadId) {
+    throw new Error(
+      `Alleva duplicate lookup found ${normalizedEmail} but did not return a lead ID`
+    );
+  }
+
+  return {
+    leadId,
+    record: matches[0]
+  };
+}
+
 async function updateHubSpotPdfUploadStatus(hubspotContactId, statusFields) {
   try {
     await hubspotRequest(
@@ -413,34 +519,74 @@ async function syncHubSpotContact(hubspotContactId) {
 
     const props = hsContact.data.properties || {};
 
-    console.log("HubSpot raw properties:", JSON.stringify(props, null, 2));
+    const isNewReferralForm = safeTrim(props.form_link) === REFERRAL_FORM_LINK;
+    const firstName = firstPresent(props.pt__first_name, props.firstname);
+    const lastName = firstPresent(props.pt__last_name, props.lastname);
+    const dob = formatHubSpotDate(firstPresent(
+      props.pt__date_of_birth,
+      props.pt__consumers_dob,
+      props.date_of_birth_date,
+      props.date_of_birth,
+      props.migrated_birthdate
+    ));
+    const country = mapCountry(firstPresent(props.pt__country, props.country)) ||
+      ALLEVA_DEFAULT_COUNTRY;
+    const state = mapStateName(firstPresent(
+      props.pt__state,
+      props.pt__state_sensitive,
+      props.state
+    ));
+    const gender = mapGender(firstPresent(props.pt__gender, props.gender));
 
-    const firstName = safeTrim(props.pt__first_name);
-    const lastName = safeTrim(props.pt__last_name);
-    const dob = formatHubSpotDate(props.pt__consumers_dob);
-    const country = mapCountry(props.pt__country) || ALLEVA_DEFAULT_COUNTRY;
-    const state = mapStateName(props.pt__state);
-    const gender = mapGender(props.pt__gender);
+    const address1 = firstPresent(
+      props.pt__address_sensitive,
+      props.pt__address,
+      props.address
+    );
+    const address2 = firstPresent(
+      props.pt__address_2_sensitive,
+      props.pt__address_2
+    );
+    const city = firstPresent(
+      props.pt__city_sensitive,
+      props.pt__city,
+      props.city
+    );
+    const zipCode = firstPresent(
+      props.pt__zip_code_sensitive,
+      props.pt__zip_code,
+      props.zip
+    );
+    const email = firstPresent(props.pt__email, props.email);
 
-    const address1 = safeTrim(props.pt__address);
-    const address2 = safeTrim(props.pt__address_2);
-    const city = safeTrim(props.pt__city);
-    const zipCode = safeTrim(props.pt__zip_code);
-    const email = safeTrim(props.pt__email);
+    const prospectPhone = normalizePhone(firstPresent(
+      props.pt__primary_phone,
+      props.phone
+    ));
+    const primaryContactPhone = normalizePhone(
+      isNewReferralForm
+        ? firstPresent(props.provider_phone, props.person_who_completed_form_phone)
+        : props.phone
+    );
+    const primaryContactFirstName = isNewReferralForm
+      ? joinName(
+          props.referring_provider_first_name,
+          props.referring_provider_last_name
+        )
+      : safeTrim(props.firstname);
+    const relationshipToPatient = firstPresent(
+      props.relationship_to_patient,
+      isNewReferralForm ? "Referring provider" : ""
+    );
 
-    const prospectPhone = normalizePhone(props.pt__primary_phone);
-    const primaryContactPhone = normalizePhone(props.phone);
-    const primaryContactFirstName = safeTrim(props.firstname);
-    const relationshipToPatient = safeTrim(props.relationship_to_patient);
-
-    if (!firstName || !lastName || !dob || !state || !prospectPhone) {
+    if (!firstName || !lastName || !prospectPhone || (!isNewReferralForm && (!dob || !state))) {
       const missingFields = [];
 
-      if (!firstName) missingFields.push("pt__first_name");
-      if (!lastName) missingFields.push("pt__last_name");
-      if (!dob) missingFields.push("pt__consumers_dob");
-      if (!state) missingFields.push("pt__state");
-      if (!prospectPhone) missingFields.push("pt__primary_phone");
+      if (!firstName) missingFields.push("first name");
+      if (!lastName) missingFields.push("last name");
+      if (!dob && !isNewReferralForm) missingFields.push("date of birth");
+      if (!state && !isNewReferralForm) missingFields.push("state");
+      if (!prospectPhone) missingFields.push("phone");
 
       throw new Error(
         `Missing required HubSpot fields for prospect: ${missingFields.join(", ")}`
@@ -508,31 +654,54 @@ async function syncHubSpotContact(hubspotContactId) {
     console.log("Testing HubSpot contact:", hubspotContactId);
     console.log("Alleva request method:", allevaMethod);
     console.log("Alleva request URL:", allevaUrl);
-    console.log("HubSpot pt__primary_phone:", props.pt__primary_phone);
-    console.log("HubSpot phone:", props.phone);
-    console.log("HubSpot firstname:", props.firstname);
-    console.log("HubSpot relationship_to_patient:", props.relationship_to_patient);
+    console.log("HubSpot form link:", props.form_link);
+    console.log("Using new referral form mapping:", isNewReferralForm);
     console.log("Prospect phone:", prospectPhone);
     console.log("Primary contact name:", primaryContactFirstName);
     console.log("Primary contact relationship:", relationshipToPatient);
     console.log("Primary contact phone:", primaryContactPhone);
-    console.log("Alleva payload:", JSON.stringify(allevaPayload, null, 2));
+    let duplicateMatch = null;
+    let allevaResponse = null;
 
-    const allevaResponse = await allevaRequest(
-      allevaMethod,
-      allevaUrl,
-      allevaPayload,
-      { "api-version": "1.0" }
-    );
+    if (!props.alleva_patient_id && email) {
+      duplicateMatch = await findAllevaDuplicateByEmail(email);
+    }
 
-    console.log(
-      "Alleva response:",
-      JSON.stringify(allevaResponse.data, null, 2)
-    );
+    if (!duplicateMatch) {
+      try {
+        allevaResponse = await allevaRequest(
+          allevaMethod,
+          allevaUrl,
+          allevaPayload,
+          { "api-version": "1.0" }
+        );
+      } catch (error) {
+        // A prospect can be created between the lookup and POST. Resolve that
+        // race by looking up the record Alleva says already owns the email.
+        if (allevaMethod !== "POST" || !email || !isAllevaEmailInUseError(error)) {
+          throw error;
+        }
 
-    const responseData = allevaResponse.data;
+        duplicateMatch = await findAllevaDuplicateByEmail(email);
+        if (!duplicateMatch) throw error;
+      }
+    }
 
-    const allevaPatientId = extractAllevaLeadId(
+    if (duplicateMatch) {
+      console.log("Linked HubSpot contact to existing Alleva record:", {
+        hubspotContactId,
+        allevaPatientId: String(duplicateMatch.leadId)
+      });
+    } else {
+      console.log(
+        "Alleva response:",
+        JSON.stringify(allevaResponse.data, null, 2)
+      );
+    }
+
+    const responseData = allevaResponse?.data || duplicateMatch?.record || {};
+
+    const allevaPatientId = duplicateMatch?.leadId || extractAllevaLeadId(
       responseData,
       props.alleva_patient_id
     );
@@ -601,7 +770,8 @@ async function syncHubSpotContact(hubspotContactId) {
       hubspotContactId,
       allevaPatientId,
       pdfUpload,
-      allevaResponse: allevaResponse.data
+      matchedExistingAllevaRecord: Boolean(duplicateMatch),
+      allevaResponse: responseData
     };
   } catch (error) {
     const errText = error.response?.data
@@ -617,10 +787,13 @@ async function syncHubSpotContact(hubspotContactId) {
         ? error.response.data
         : JSON.stringify(error.response?.data, null, 2)
     );
-    console.error(
-      "Axios error JSON:",
-      error.toJSON ? JSON.stringify(error.toJSON(), null, 2) : error.message
-    );
+    console.error("Request failure summary:", {
+      name: error.name,
+      code: error.code,
+      status: error.response?.status,
+      method: error.config?.method,
+      url: error.config?.url
+    });
     console.error("Full error message:", error.message);
 
     try {
@@ -652,12 +825,9 @@ async function searchContactsNeedingSync(after = null) {
       {
         filters: [
           {
-            propertyName: "pt__first_name",
-            operator: "HAS_PROPERTY"
-          },
-          {
-            propertyName: "pt__last_name",
-            operator: "HAS_PROPERTY"
+            propertyName: "form_link",
+            operator: "EQ",
+            value: REFERRAL_FORM_LINK
           }
         ]
       }
