@@ -29,6 +29,9 @@ const ALLEVA_DOCUMENT_TYPE_ID = process.env.ALLEVA_DOCUMENT_TYPE_ID;
 const REFERRAL_FORM_LINK =
   process.env.REFERRAL_FORM_LINK ||
   "advocatesupport.formstack.com/forms/advocate_referral_2026";
+const REFERRAL_FORM_EVENT_NAME =
+  process.env.REFERRAL_FORM_EVENT_NAME ||
+  "Advocate Adult PRP Referral Form – 2026: ADV Adult Referral Form 2026";
 
 const HUBSPOT_SYNC_PROPERTIES = [
   "pt__first_name",
@@ -108,6 +111,11 @@ function firstPresent(...values) {
 
 function joinName(...parts) {
   return parts.map(safeTrim).filter(Boolean).join(" ");
+}
+
+function isReferralFormSubmission(properties) {
+  return safeTrim(properties.form_link) === REFERRAL_FORM_LINK ||
+    safeTrim(properties.recent_conversion_event_name) === REFERRAL_FORM_EVENT_NAME;
 }
 
 function normalizePhone(value) {
@@ -519,7 +527,7 @@ async function syncHubSpotContact(hubspotContactId) {
 
     const props = hsContact.data.properties || {};
 
-    const isNewReferralForm = safeTrim(props.form_link) === REFERRAL_FORM_LINK;
+    const isNewReferralForm = isReferralFormSubmission(props);
     const firstName = firstPresent(props.pt__first_name, props.firstname);
     const lastName = firstPresent(props.pt__last_name, props.lastname);
     const dob = formatHubSpotDate(firstPresent(
@@ -828,6 +836,15 @@ async function searchContactsNeedingSync(after = null) {
             propertyName: "form_link",
             operator: "EQ",
             value: REFERRAL_FORM_LINK
+          }
+        ]
+      },
+      {
+        filters: [
+          {
+            propertyName: "recent_conversion_event_name",
+            operator: "EQ",
+            value: REFERRAL_FORM_EVENT_NAME
           }
         ]
       }
